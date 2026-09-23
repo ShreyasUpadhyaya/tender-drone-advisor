@@ -51,3 +51,24 @@ Run C01 checks from the corresponding package directories:
 cd apps/api && uv run ruff format --check . && uv run ruff check . && uv run pytest
 cd apps/web && npm ci && npm run format && npm run lint && npm run typecheck && npm test
 ```
+
+## C02 document ingestion
+
+The C02 API accepts PDF, DOCX, and UTF-8 TXT tender files up to `MAX_UPLOAD_BYTES` (20 MiB by default). Uploads are content-hash idempotent: submitting the same bytes returns the original document/version/job rather than creating another object. Originals use stable keys of the form `documents/{document-id}/versions/1/original` in MinIO.
+
+```text
+POST /v1/documents                      multipart field: file
+GET  /v1/documents/{document-id}
+GET  /v1/documents/{document-id}/spans
+GET  /v1/documents/{document-id}/spans/{span-id}
+```
+
+Start the stack, then upload a local fixture from Windows PowerShell:
+
+```powershell
+docker compose up --build -d
+curl.exe -F "file=@C:\path\to\tender.txt;type=text/plain" http://localhost:8000/v1/documents
+docker compose logs --follow worker
+```
+
+Poll `GET /v1/documents/{document-id}` until state is `completed` or `failed`. PDF extraction retains page numbers; DOCX and TXT retain section boundaries. Scanned PDFs invoke the Tesseract fallback included in the API/worker image. C02 does not extract tender requirements or make recommendations.

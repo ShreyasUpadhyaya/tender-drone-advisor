@@ -1,16 +1,22 @@
-"""Placeholder worker process for the C01 service topology."""
+"""Redis worker for C02 tender ingestion jobs."""
 
 import logging
-import time
+
+from redis import Redis
+from rq import Queue, Worker
+
+from app.settings import get_settings
 
 logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger(__name__)
 
 
 def main() -> None:
-    LOGGER.info("Worker foundation is running; no jobs are registered in C01.")
-    while True:
-        time.sleep(60)
+    settings = get_settings()
+    connection = Redis.from_url(settings.redis_url)
+    queue = Queue(settings.ingestion_queue, connection=connection)
+    LOGGER.info("Starting tender ingestion worker queue=%s", settings.ingestion_queue)
+    Worker([queue], connection=connection).work()
 
 
 if __name__ == "__main__":

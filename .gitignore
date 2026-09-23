@@ -18,6 +18,7 @@ __pycache__/
 .venv/
 .uv-cache/
 *.egg-info/
+*.db
 
 # Local tooling
 .DS_Store
