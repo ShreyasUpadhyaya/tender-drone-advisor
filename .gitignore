@@ -2,6 +2,9 @@
 .env.*
 !.env.example
 
+# Private local validation documents and outputs
+/test-data/
+
 # JavaScript
 node_modules/
 .next/

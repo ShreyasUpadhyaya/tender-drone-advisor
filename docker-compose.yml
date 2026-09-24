@@ -1,5 +1,18 @@
 name: tender-drone-advisor
 
+x-extraction-environment: &extraction-environment
+  LLM_PROVIDER: ${LLM_PROVIDER:-fake}
+  LLM_MODEL: ${LLM_MODEL:-fixture-v1}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0}
+  LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-4096}
+  LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+  EXTRACTION_MAX_REPAIRS: ${EXTRACTION_MAX_REPAIRS:-1}
+  EXTRACTION_TRANSIENT_RETRIES: ${EXTRACTION_TRANSIENT_RETRIES:-1}
+  EXTRACTION_CONFIDENCE_THRESHOLD: ${EXTRACTION_CONFIDENCE_THRESHOLD:-0.8}
+  EXTRACTION_BATCH_CHARS: ${EXTRACTION_BATCH_CHARS:-12000}
+  EXTRACTION_MAX_BATCHES: ${EXTRACTION_MAX_BATCHES:-32}
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -43,6 +56,7 @@ services:
     build:
       context: ./apps/api
     environment:
+      <<: *extraction-environment
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://tender_advisor:replace-with-local-password@postgres:5432/tender_advisor}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
@@ -77,6 +91,7 @@ services:
       context: ./apps/api
     command: ["python", "-m", "app.worker"]
     environment:
+      <<: *extraction-environment
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://tender_advisor:replace-with-local-password@postgres:5432/tender_advisor}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}

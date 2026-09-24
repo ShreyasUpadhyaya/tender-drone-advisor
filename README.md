@@ -72,3 +72,13 @@ docker compose logs --follow worker
 ```
 
 Poll `GET /v1/documents/{document-id}` until state is `completed` or `failed`. PDF extraction retains page numbers; DOCX and TXT retain section boundaries. Scanned PDFs invoke the Tesseract fallback included in the API/worker image. C02 does not extract tender requirements or make recommendations.
+
+## C03 requirement extraction
+
+Start extraction with `POST /v1/document-versions/{version-id}/extractions` after ingestion completes.
+The Redis worker runs a real LangGraph with LangChain model/prompt/parser adapters,
+deterministic SI normalization, evidence checks, conflict detection, bounded repair
+and persisted human-review items. Defaults use a credentials-free fake that honestly
+routes missing requirements to review. No feasibility or cost decision is produced.
+See [C03 extraction](docs/C03_EXTRACTION.md) for contracts, the graph, review APIs,
+configuration, checks and exact opt-in live verification commands.

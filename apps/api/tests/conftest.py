@@ -3,6 +3,9 @@ from collections.abc import Iterator
 from types import SimpleNamespace
 
 os.environ["DATABASE_URL"] = "sqlite+pysqlite:///./tender_advisor_test.db"
+os.environ["LLM_PROVIDER"] = "fake"
+os.environ["LLM_MODEL"] = "fixture-v1"
+os.environ["LLM_API_KEY"] = ""
 
 import pytest
 from fastapi.testclient import TestClient
