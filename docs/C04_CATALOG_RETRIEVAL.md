@@ -20,7 +20,7 @@ The synthetic seed contains three airframe classes, batteries, cameras, communic
 
 ## APIs
 
-* `POST /v1/catalog/versions` creates an immutable snapshot identity.
+* `POST /v1/catalog/versions` creates an immutable snapshot identity. Effective dates use only JSON `YYYY-MM-DD` strings (or `null` when optional); locale dates and datetimes are rejected.
 * `GET /v1/catalog/versions/current` returns the current snapshot.
 * `POST /v1/catalog/import` imports an idempotent batch and compatibility rules.
 * `POST /v1/catalog/items` creates a new item/version without deleting history.
@@ -31,6 +31,8 @@ The synthetic seed contains three airframe classes, batteries, cameras, communic
 * `POST /v1/catalog/items/{id}/deactivate` creates a new inactive item version; the prior row is never mutated.
 * `POST /v1/catalog/retrieve` ranks candidates with structured requirements.
 * `POST /v1/catalog/retrieve-from-run/{run_id}` consumes only persisted C03 `requirements-v2` records and carries review state/evidence span IDs forward.
+
+All catalog success responses have explicit Pydantic response models in OpenAPI; Swagger therefore shows their documented fields rather than a generic object. Repeating an identical version creation returns the existing version with `idempotent: true` and creates no duplicate row. Prices use the same strict ISO-date and non-reversed effective-period contract.
 
 Retrieval score is `final_score = structured_match_score`; the semantic score is currently `0.0` because embeddings are deliberately deferred to the later retrieval commit. Mandatory failures always make a candidate ineligible. Preferred matches affect the score but do not assert feasibility. Results include one breakdown entry per requirement, including requirement ID/evidence span, missing or failed attributes, availability status, and overspec weight/cost penalty metadata. A run with C03 `needs_review` is carried forward as `review_required`; candidate retrieval never upgrades that state.
 
@@ -46,6 +48,13 @@ $seed = Get-Content apps/api/tests/fixtures/catalog_seed.json -Raw
 Invoke-RestMethod -Method Post -Uri http://localhost:8000/v1/catalog/import -ContentType 'application/json' -Body $seed
 Invoke-RestMethod http://localhost:8000/v1/catalog/versions/current
 Invoke-RestMethod 'http://localhost:8000/v1/catalog/items?category=camera'
+```
+
+To check the JSON date contract in Swagger or PowerShell:
+
+```powershell
+$version = @{ version='c04-manual-2026-09-24-01'; status='draft'; source='synthetic-demo'; effective_from='2026-09-24'; effective_to='2026-09-24' } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/v1/catalog/versions -ContentType 'application/json' -Body $version
 ```
 
 The fixture is safe synthetic data and does not contain the private tender or live-gate reports. C04 does not use paid providers, embeddings, pgvector queries, or any LLM.

@@ -192,7 +192,7 @@ def retrieve_from_run(
         {"platform", "range", "endurance", "payload"} - {r.category for r in requirements}
     )
     result.update(
-        extraction_run_id=run.id,
+        extraction_run_id=UUID(run.id),
         extraction_review_state=run.review_state,
         review_required=run.review_state != "not_required",
     )

@@ -17,8 +17,14 @@ from app.catalog.schemas import (
     CatalogImportResponse,
     CatalogItemCreate,
     CatalogItemResponse,
+    CatalogPriceResponse,
     CatalogVersionCreate,
+    CatalogVersionCreateResponse,
+    CompatibilityRuleResponse,
+    CurrentCatalogVersionResponse,
     RetrievalRequest,
+    RetrievalResponse,
+    SupplierResponse,
 )
 from app.catalog.service import item_response, retrieve_candidates, retrieve_from_run
 from app.catalog.validation import validate_item_payload
@@ -38,19 +44,38 @@ def version(db: Session, value: str) -> CatalogVersion:
     return row
 
 
-@router.post("/versions", response_model=dict, status_code=201)
-def create_version(payload: CatalogVersionCreate, db: Session = Depends(get_db)):
+@router.post("/versions", response_model=CatalogVersionCreateResponse, status_code=201)
+def create_version(
+    payload: CatalogVersionCreate, db: Session = Depends(get_db)
+) -> CatalogVersionCreateResponse:
     existing = db.scalar(select(CatalogVersion).where(CatalogVersion.version == payload.version))
     if existing:
-        return {"id": existing.id, "version": existing.version, "idempotent": True}
+        return CatalogVersionCreateResponse(
+            id=UUID(existing.id),
+            version=existing.version,
+            status=existing.status,
+            source=existing.source,
+            effective_from=existing.effective_from,
+            effective_to=existing.effective_to,
+            idempotent=True,
+        )
     row = CatalogVersion(**payload.model_dump())
     db.add(row)
     db.commit()
-    return {"id": row.id, "version": row.version, "idempotent": False}
+    db.refresh(row)
+    return CatalogVersionCreateResponse(
+        id=UUID(row.id),
+        version=row.version,
+        status=row.status,
+        source=row.source,
+        effective_from=row.effective_from,
+        effective_to=row.effective_to,
+        idempotent=False,
+    )
 
 
-@router.get("/versions/current", response_model=dict)
-def current_version(db: Session = Depends(get_db)):
+@router.get("/versions/current", response_model=CurrentCatalogVersionResponse)
+def current_version(db: Session = Depends(get_db)) -> CurrentCatalogVersionResponse:
     row = db.scalar(
         select(CatalogVersion)
         .where(CatalogVersion.status == "current")
@@ -58,7 +83,14 @@ def current_version(db: Session = Depends(get_db)):
     )
     if row is None:
         raise fail("catalog_empty", "No current catalog version exists.", 404)
-    return {"id": row.id, "version": row.version, "status": row.status, "source": row.source}
+    return CurrentCatalogVersionResponse(
+        id=UUID(row.id),
+        version=row.version,
+        status=row.status,
+        source=row.source,
+        effective_from=row.effective_from,
+        effective_to=row.effective_to,
+    )
 
 
 @router.post("/import", response_model=CatalogImportResponse, status_code=201)
@@ -313,68 +345,70 @@ def get_item(item_id: UUID, db: Session = Depends(get_db)):
     return item_response(row, db.get(CatalogVersion, row.catalog_version_id))
 
 
-@router.post("/retrieve", response_model=dict)
-def retrieve(payload: RetrievalRequest, db: Session = Depends(get_db)):
-    return retrieve_candidates(db, payload)
+@router.post("/retrieve", response_model=RetrievalResponse)
+def retrieve(payload: RetrievalRequest, db: Session = Depends(get_db)) -> RetrievalResponse:
+    return RetrievalResponse.model_validate(retrieve_candidates(db, payload))
 
 
-@router.post("/retrieve-from-run/{run_id}", response_model=dict)
+@router.post("/retrieve-from-run/{run_id}", response_model=RetrievalResponse)
 def retrieve_run(
     run_id: UUID,
     db: Session = Depends(get_db),
     category: str | None = None,
     limit: int = Query(default=20, ge=1, le=100),
-):
+) -> RetrievalResponse:
     try:
-        return retrieve_from_run(db, str(run_id), category, limit)
+        return RetrievalResponse.model_validate(retrieve_from_run(db, str(run_id), category, limit))
     except ValueError as exc:
         raise fail("retrieval_rejected", str(exc), 409) from exc
 
 
-@router.get("/compatibility-rules", response_model=list[dict])
-def compatibility_rules(db: Session = Depends(get_db)):
+@router.get("/compatibility-rules", response_model=list[CompatibilityRuleResponse])
+def compatibility_rules(db: Session = Depends(get_db)) -> list[CompatibilityRuleResponse]:
     return [
-        {
-            "id": r.id,
-            "from_item_id": r.from_item_id,
-            "to_item_id": r.to_item_id,
-            "rule_type": r.rule_type,
-            "reason": r.reason,
-            "constraints": r.constraints,
-            "provenance": r.provenance,
-        }
+        CompatibilityRuleResponse(
+            id=UUID(r.id),
+            from_item_id=UUID(r.from_item_id),
+            to_item_id=UUID(r.to_item_id),
+            rule_type=r.rule_type,
+            reason=r.reason,
+            constraints=r.constraints or {},
+            provenance=r.provenance or {},
+        )
         for r in db.scalars(select(CompatibilityRule).order_by(CompatibilityRule.id)).all()
     ]
 
 
-@router.get("/suppliers", response_model=list[dict])
-def suppliers(db: Session = Depends(get_db)):
+@router.get("/suppliers", response_model=list[SupplierResponse])
+def suppliers(db: Session = Depends(get_db)) -> list[SupplierResponse]:
     return [
-        {
-            "id": x.id,
-            "supplier_code": x.supplier_code,
-            "name": x.name,
-            "active": x.active,
-            "provenance": x.provenance,
-        }
+        SupplierResponse(
+            id=UUID(x.id),
+            supplier_code=x.supplier_code,
+            name=x.name,
+            active=x.active,
+            provenance=x.provenance or {},
+        )
         for x in db.scalars(select(Supplier).order_by(Supplier.supplier_code)).all()
     ]
 
 
-@router.get("/prices", response_model=list[dict])
-def prices(db: Session = Depends(get_db), item_id: UUID | None = None):
+@router.get("/prices", response_model=list[CatalogPriceResponse])
+def prices(
+    db: Session = Depends(get_db), item_id: UUID | None = None
+) -> list[CatalogPriceResponse]:
     stmt = select(CatalogPrice).order_by(CatalogPrice.item_id, CatalogPrice.effective_from)
     if item_id:
         stmt = stmt.where(CatalogPrice.item_id == str(item_id))
     return [
-        {
-            "id": x.id,
-            "item_id": x.item_id,
-            "amount_paise": x.amount_paise,
-            "currency": x.currency,
-            "effective_from": x.effective_from,
-            "effective_to": x.effective_to,
-        }
+        CatalogPriceResponse(
+            id=UUID(x.id),
+            item_id=UUID(x.item_id),
+            amount_paise=x.amount_paise,
+            currency=x.currency,
+            effective_from=x.effective_from,
+            effective_to=x.effective_to,
+        )
         for x in db.scalars(stmt).all()
     ]
 

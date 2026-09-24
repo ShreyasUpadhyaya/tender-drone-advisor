@@ -1,12 +1,127 @@
 import json
+from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
 
+from sqlalchemy import func, select
+
+from app.catalog.models import CatalogVersion
 from app.db import SessionLocal
 from app.extraction.contracts import ValidatedRequirement
 from app.extraction.models import ExtractionRun, RequirementRecord
 
 SEED = json.loads((Path(__file__).parent / "fixtures" / "catalog_seed.json").read_text())
+
+
+def test_catalog_version_accepts_canonical_json_dates_and_is_idempotent(client):
+    payload = {
+        "version": "c04-manual-2026-09-24-01",
+        "status": "draft",
+        "source": "synthetic-demo",
+        "effective_from": "2026-09-24",
+        "effective_to": "2026-09-24",
+    }
+    first = client.post("/v1/catalog/versions", json=payload)
+    assert first.status_code == 201, first.text
+    body = first.json()
+    assert body["version"] == "c04-manual-2026-09-24-01"
+    assert body["status"] == "draft"
+    assert body["source"] == "synthetic-demo"
+    assert body["effective_from"] == "2026-09-24"
+    assert body["effective_to"] == "2026-09-24"
+    assert body["idempotent"] is False
+    repeated = client.post("/v1/catalog/versions", json=payload)
+    assert repeated.status_code == 201
+    assert repeated.json()["id"] == first.json()["id"]
+    assert repeated.json()["idempotent"] is True
+    with SessionLocal() as db:
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(CatalogVersion)
+                .where(CatalogVersion.version == payload["version"])
+            )
+            == 1
+        )
+
+
+def test_catalog_version_json_dates_allow_null_and_reject_noncanonical_or_reversed_values(client):
+    nullable = client.post(
+        "/v1/catalog/versions",
+        json={
+            "version": "null-dates-v1",
+            "effective_from": None,
+            "effective_to": None,
+        },
+    )
+    assert nullable.status_code == 201
+    assert nullable.json()["effective_from"] is None
+    assert nullable.json()["effective_to"] is None
+
+    bad_cases = [
+        ("bad-format-v1", "24-09-2026", None),
+        ("datetime-v1", "2026-09-24T00:00:00Z", None),
+        ("impossible-v1", "2026-02-30", None),
+        ("reversed-v1", "2026-09-25", "2026-09-24"),
+    ]
+    for version, effective_from, effective_to in bad_cases:
+        response = client.post(
+            "/v1/catalog/versions",
+            json={
+                "version": version,
+                "effective_from": effective_from,
+                "effective_to": effective_to,
+            },
+        )
+        assert response.status_code == 422, response.text
+
+
+def test_catalog_import_price_dates_use_same_json_contract(client):
+    payload = deepcopy(SEED)
+    payload["idempotency_key"] = "iso-price-date-contract-v1"
+    payload["version"]["version"] = "iso-price-date-contract-v1"
+    payload["version"]["effective_from"] = "2026-09-24"
+    payload["version"]["effective_to"] = None
+    for item in payload["items"]:
+        item["catalog_version"] = payload["version"]["version"]
+    payload["prices"][0]["effective_from"] = "2026-01-01"
+    payload["prices"][0]["effective_to"] = None
+    assert client.post("/v1/catalog/import", json=payload).status_code == 201
+
+    for suffix, effective_from, effective_to in [
+        ("format", "01/01/2026", None),
+        ("reversed", "2026-12-31", "2026-01-01"),
+    ]:
+        invalid = deepcopy(payload)
+        invalid["version"]["version"] = f"invalid-price-date-{suffix}-v1"
+        invalid["idempotency_key"] = f"invalid-price-date-{suffix}-contract-v1"
+        for item in invalid["items"]:
+            item["catalog_version"] = invalid["version"]["version"]
+            item["item_version"] = 2
+        for price in invalid["prices"]:
+            price["item_version"] = 2
+            price["effective_from"] = effective_from
+            price["effective_to"] = effective_to
+        assert client.post("/v1/catalog/import", json=invalid).status_code == 422
+
+
+def test_catalog_openapi_exposes_typed_success_responses(client):
+    schema = client.get("/openapi.json").json()
+    paths = schema["paths"]
+    for path, method, status in [
+        ("/v1/catalog/versions", "post", "201"),
+        ("/v1/catalog/versions/current", "get", "200"),
+        ("/v1/catalog/retrieve", "post", "200"),
+        ("/v1/catalog/retrieve-from-run/{run_id}", "post", "200"),
+        ("/v1/catalog/compatibility-rules", "get", "200"),
+        ("/v1/catalog/suppliers", "get", "200"),
+        ("/v1/catalog/prices", "get", "200"),
+    ]:
+        response_schema = paths[path][method]["responses"][status]["content"]["application/json"][
+            "schema"
+        ]
+        assert "$ref" in response_schema or "items" in response_schema
+        assert response_schema.get("additionalProperties") is not True
 
 
 def test_catalog_import_is_idempotent_and_filters_candidates(client):
@@ -15,6 +130,9 @@ def test_catalog_import_is_idempotent_and_filters_candidates(client):
     assert first.json()["rule_count"] == 1
     second = client.post("/v1/catalog/import", json=SEED)
     assert second.status_code == 201
+    current = client.get("/v1/catalog/versions/current")
+    assert current.status_code == 200
+    assert current.json()["version"] == "demo-2026-09"
     items = client.get("/v1/catalog/items?category=camera").json()
     assert [item["sku"] for item in items] == ["SYN-CAM-RGB", "SYN-CAM-THERMAL"]
     result = client.post(

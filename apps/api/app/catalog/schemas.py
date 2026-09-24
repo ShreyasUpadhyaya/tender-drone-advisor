@@ -1,8 +1,9 @@
+import re
 from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 CATALOG_SCHEMA_VERSION = "catalog-v1"
 CATEGORIES = Literal[
@@ -21,6 +22,21 @@ CATEGORIES = Literal[
     "gcs_software",
     "certification",
 ]
+ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def canonical_json_date(value: object) -> object:
+    """Accept only an ISO calendar date at the JSON boundary.
+
+    Strict request models intentionally reject coercion for numeric and enum
+    fields. Dates are the narrow exception: JSON has no native date type, so
+    its canonical YYYY-MM-DD string is accepted and parsed by Pydantic.
+    """
+    if value is None or (isinstance(value, date) and not isinstance(value, datetime)):
+        return value
+    if isinstance(value, str) and ISO_DATE.fullmatch(value):
+        return value
+    raise ValueError("must be an ISO-8601 calendar date in YYYY-MM-DD format")
 
 
 class Strict(BaseModel):
@@ -31,8 +47,13 @@ class CatalogVersionCreate(Strict):
     version: str = Field(min_length=1, max_length=40)
     status: Literal["draft", "current", "retired"] = "draft"
     source: str = "synthetic-demo"
-    effective_from: date | None = None
-    effective_to: date | None = None
+    effective_from: date | None = Field(default=None, strict=False)
+    effective_to: date | None = Field(default=None, strict=False)
+
+    @field_validator("effective_from", "effective_to", mode="before")
+    @classmethod
+    def iso_dates(cls, value: object) -> object:
+        return canonical_json_date(value)
 
     @model_validator(mode="after")
     def dates(self):
@@ -74,6 +95,25 @@ class CatalogItemResponse(CatalogItemCreate):
     updated_at: datetime
 
 
+class CatalogVersionCreateResponse(Strict):
+    id: UUID
+    version: str
+    status: Literal["draft", "current", "retired"]
+    source: str
+    effective_from: date | None
+    effective_to: date | None
+    idempotent: bool
+
+
+class CurrentCatalogVersionResponse(Strict):
+    id: UUID
+    version: str
+    status: Literal["draft", "current", "retired"]
+    source: str
+    effective_from: date | None
+    effective_to: date | None
+
+
 class CompatibilityRuleCreate(Strict):
     from_sku: str = Field(min_length=1)
     from_version: int = Field(ge=1)
@@ -102,6 +142,11 @@ class PriceCreate(Strict):
     effective_from: date = Field(strict=False)
     effective_to: date | None = Field(default=None, strict=False)
 
+    @field_validator("effective_from", "effective_to", mode="before")
+    @classmethod
+    def iso_dates(cls, value: object) -> object:
+        return canonical_json_date(value)
+
     @model_validator(mode="after")
     def date_order(self):
         if self.effective_to and self.effective_to < self.effective_from:
@@ -115,6 +160,33 @@ class CatalogImportResponse(Strict):
     item_ids: list[UUID]
     rule_count: int
     idempotent: bool
+
+
+class CompatibilityRuleResponse(Strict):
+    id: UUID
+    from_item_id: UUID
+    to_item_id: UUID
+    rule_type: Literal["compatible", "incompatible"]
+    reason: str
+    constraints: dict[str, Any]
+    provenance: dict[str, Any]
+
+
+class SupplierResponse(Strict):
+    id: UUID
+    supplier_code: str
+    name: str
+    active: bool
+    provenance: dict[str, Any]
+
+
+class CatalogPriceResponse(Strict):
+    id: UUID
+    item_id: UUID
+    amount_paise: int
+    currency: Literal["INR", "USD", "EUR"]
+    effective_from: date
+    effective_to: date | None
 
 
 class CandidateRequirement(Strict):
@@ -135,3 +207,31 @@ class RetrievalRequest(Strict):
     include_unavailable: bool = False
     context_skus: list[str] = Field(default_factory=list, max_length=50)
     limit: int = Field(default=20, ge=1, le=100)
+
+
+class CandidatePenalty(Strict):
+    type: Literal["overspec"]
+    attribute: str
+    weight_kg: float
+    cost_paise: int
+
+
+class CatalogCandidateResponse(Strict):
+    item: CatalogItemResponse
+    eligible: bool
+    semantic_score: float
+    structured_match_score: float
+    final_score: float
+    breakdown: list[str]
+    penalties: list[CandidatePenalty]
+
+
+class RetrievalResponse(Strict):
+    catalog_version: str | None
+    candidates: list[CatalogCandidateResponse]
+    context_skus: list[str] = Field(default_factory=list)
+    missing_requirements: list[str] = Field(default_factory=list)
+    extraction_run_id: UUID | None = None
+    extraction_review_state: str | None = None
+    review_required: bool | None = None
+    missing_critical_categories: list[str] | None = None
