@@ -1,8 +1,10 @@
 import os
 from collections.abc import Iterator
+from pathlib import Path
 from types import SimpleNamespace
 
-os.environ["DATABASE_URL"] = "sqlite+pysqlite:///./tender_advisor_test.db"
+TEST_DATABASE = Path(__file__).resolve().parents[1] / f"tender_advisor_test_{os.getpid()}.db"
+os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{TEST_DATABASE.as_posix()}"
 os.environ["LLM_PROVIDER"] = "fake"
 os.environ["LLM_MODEL"] = "fixture-v1"
 os.environ["LLM_API_KEY"] = ""
@@ -39,10 +41,17 @@ class FakeQueue:
 
 @pytest.fixture(autouse=True)
 def database() -> Iterator[None]:
-    Base.metadata.drop_all(engine)
+    # This is the explicitly configured disposable SQLite test artifact. Removing
+    # it avoids stale/partial schemas after interrupted test runs without ever
+    # touching a configured application database.
+    engine.dispose()
+    for artifact in (TEST_DATABASE, Path(f"{TEST_DATABASE}-journal"), Path(f"{TEST_DATABASE}-wal")):
+        artifact.unlink(missing_ok=True)
     Base.metadata.create_all(engine)
     yield
-    Base.metadata.drop_all(engine)
+    engine.dispose()
+    for artifact in (TEST_DATABASE, Path(f"{TEST_DATABASE}-journal"), Path(f"{TEST_DATABASE}-wal")):
+        artifact.unlink(missing_ok=True)
 
 
 @pytest.fixture

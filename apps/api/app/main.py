@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -7,6 +8,7 @@ from app.catalog.api import router as catalog_router
 from app.extraction.api import router as extraction_router
 from app.rag.api import router as rag_router
 from app.routes.documents import router as documents_router
+from app.settings import get_settings
 
 
 class HealthResponse(BaseModel):
@@ -15,6 +17,13 @@ class HealthResponse(BaseModel):
 
 
 app = FastAPI(title="Tender Drone Advisor API", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().allowed_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["content-type"],
+)
 app.include_router(documents_router)
 app.include_router(extraction_router)
 app.include_router(catalog_router)

@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(case_sensitive=False)
 
     app_env: str = "development"
+    cors_origins: str = "http://localhost:3000"
     database_url: str = "postgresql+psycopg://tender_advisor:replace-with-local-password@localhost:5432/tender_advisor"
     redis_url: str = "redis://localhost:6379/0"
     s3_endpoint: str = "http://localhost:9000"
@@ -34,6 +35,9 @@ class Settings(BaseSettings):
     rag_report_provider: str = "fake"
     rag_report_model: str = "fixture-report-v1"
     rag_external_enabled: bool = False
+
+    def allowed_origins(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 
 @lru_cache

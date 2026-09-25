@@ -98,3 +98,20 @@ See [C06 RAG orchestration](docs/C06_RAG_ORCHESTRATION.md) for snapshot-isolated
 pgvector search, typed grounded reports, safe node audits and durable human-review
 interruption/resume. Local defaults use fake adapters; external processing requires
 an explicit server setting and per-request authorization. C05 remains authoritative.
+
+## C07 web workspace
+
+Start the stack with `docker compose up --build -d`, then open
+`http://localhost:3000`. For local frontend iteration use `cd apps/web`, `npm ci`,
+and `npm run dev`. Upload a synthetic PDF, DOCX or TXT; wait for ingestion, run
+extraction, inspect citations/issues, start analysis with a catalog UUID, inspect
+BOM/cost, then generate the grounded report. Costs are backend paise rendered as
+INR; the UI never calculates totals or grants approval.
+
+See [C07 web application](docs/C07_WEB_APPLICATION.md) for the architecture,
+polling/error model, privacy boundary and manual smoke procedure.
+
+The visible **Local Demo Mode** banner is intentional: the local workspace does
+not implement login or authorization. C08/production hardening must provide
+authentication, RBAC, tenant isolation, signed uploads and per-user audit
+attribution. Do not expose the local demo to untrusted networks.
