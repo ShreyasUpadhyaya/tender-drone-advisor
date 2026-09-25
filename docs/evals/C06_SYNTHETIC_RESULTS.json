@@ -1,0 +1,40 @@
+{
+  "evaluation_version": "synthetic-rag-eval-v1",
+  "graph_version": "rag-graph-v1.0.0",
+  "chunk_version": "span-chars-v1.0.0",
+  "prompt_version": "grounded-report-v1",
+  "retrieval_version": "hybrid-v1",
+  "provenance": "Locally authored synthetic fixtures only; no private tender or governed held-out corpus.",
+  "backend_tests": {"passed": 140, "failed": 0, "c06_tests": 26},
+  "frontend": {"format": "passed", "lint": "passed", "typecheck": "passed", "test_command": "passed", "test_cases": 0},
+  "cases": [
+    {"id": "S06-01", "expected": "feasible", "actual": "feasible", "passed": true},
+    {"id": "S06-02", "expected": "feasible", "actual": "feasible", "passed": true},
+    {"id": "S06-03", "expected": "infeasible", "actual": "infeasible", "passed": true},
+    {"id": "S06-04", "expected": "needs_review", "actual": "needs_review", "passed": true},
+    {"id": "S06-05", "expected": "needs_review", "actual": "needs_review", "passed": true},
+    {"id": "S06-06", "expected": "needs_review", "actual": "needs_review", "passed": true}
+  ],
+  "postgres_smoke": {
+    "chunks": 45,
+    "dimensions": 256,
+    "report_citations": 12,
+    "audited_nodes": 13,
+    "concurrent_duplicates": 4,
+    "same_identity": true,
+    "deterministic_replay": "passed",
+    "solver_payload_equality": "passed",
+    "durable_interrupt_resume": "passed",
+    "fresh_migration_head": "0006_rag"
+  },
+  "live_synthetic": {
+    "status": "passed",
+    "embedding_model": "text-embedding-3-small",
+    "report_model": "gpt-4.1-mini-2025-04-14",
+    "idempotent_repeat": true,
+    "solver_payload_equality": "passed",
+    "private_sources_used": false
+  },
+  "unmeasured": ["semantic recall", "human-judged utility", "held-out tender accuracy", "per-case latency"],
+  "claim_boundary": "Fact-ID allowlist and deterministic rendering tested; no assertion of free-form natural-language entailment quality."
+}

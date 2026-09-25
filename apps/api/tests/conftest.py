@@ -6,6 +6,11 @@ os.environ["DATABASE_URL"] = "sqlite+pysqlite:///./tender_advisor_test.db"
 os.environ["LLM_PROVIDER"] = "fake"
 os.environ["LLM_MODEL"] = "fixture-v1"
 os.environ["LLM_API_KEY"] = ""
+os.environ["RAG_EMBEDDING_PROVIDER"] = "fake"
+os.environ["RAG_EMBEDDING_MODEL"] = "hash-v1"
+os.environ["RAG_REPORT_PROVIDER"] = "fake"
+os.environ["RAG_REPORT_MODEL"] = "fixture-report-v1"
+os.environ["RAG_EXTERNAL_ENABLED"] = "false"
 
 import pytest
 from fastapi.testclient import TestClient

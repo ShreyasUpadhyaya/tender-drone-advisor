@@ -1,0 +1,60 @@
+{
+  "version": "synthetic-rag-eval-v1",
+  "provenance": "Locally authored synthetic scenarios; not public/held-out tenders or human-approved engineering answer keys.",
+  "cases": [
+    {
+      "id": "S06-01",
+      "scenario": "clean",
+      "range_km": 25,
+      "missing": false,
+      "low_confidence": false,
+      "question": "summarize",
+      "expected": "feasible"
+    },
+    {
+      "id": "S06-02",
+      "scenario": "messy",
+      "range_km": 25,
+      "missing": false,
+      "low_confidence": false,
+      "question": "cost",
+      "expected": "feasible"
+    },
+    {
+      "id": "S06-03",
+      "scenario": "impossible",
+      "range_km": 100,
+      "missing": false,
+      "low_confidence": false,
+      "question": "summarize",
+      "expected": "infeasible"
+    },
+    {
+      "id": "S06-04",
+      "scenario": "incomplete",
+      "range_km": 25,
+      "missing": true,
+      "low_confidence": false,
+      "question": "requirements",
+      "expected": "needs_review"
+    },
+    {
+      "id": "S06-05",
+      "scenario": "low_confidence",
+      "range_km": 25,
+      "missing": false,
+      "low_confidence": true,
+      "question": "summarize",
+      "expected": "needs_review"
+    },
+    {
+      "id": "S06-06",
+      "scenario": "unsupported",
+      "range_km": 25,
+      "missing": false,
+      "low_confidence": false,
+      "question": "approve flight certification",
+      "expected": "needs_review"
+    }
+  ]
+}

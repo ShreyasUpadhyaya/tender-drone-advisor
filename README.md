@@ -91,3 +91,10 @@ configuration generation, typed analysis APIs, immutable inputs, integer BOM
 costing, review routing and reproducible Compose smoke checks.
 
 C05 makes no LLM calls and does not imply engineering or flight approval.
+
+## C06 retrieval and grounded orchestration
+
+See [C06 RAG orchestration](docs/C06_RAG_ORCHESTRATION.md) for snapshot-isolated
+pgvector search, typed grounded reports, safe node audits and durable human-review
+interruption/resume. Local defaults use fake adapters; external processing requires
+an explicit server setting and per-request authorization. C05 remains authoritative.

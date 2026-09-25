@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     extraction_confidence_threshold: float = Field(default=0.8, ge=0, le=1)
     extraction_batch_chars: int = Field(default=12000, ge=100, le=50000)
     extraction_max_batches: int = Field(default=32, ge=1, le=100)
+    rag_namespace: str = "local-demo"
+    rag_embedding_provider: str = "fake"
+    rag_embedding_model: str = "hash-v1"
+    rag_embedding_dimensions: int = Field(default=256, ge=64, le=1536)
+    rag_report_provider: str = "fake"
+    rag_report_model: str = "fixture-report-v1"
+    rag_external_enabled: bool = False
 
 
 @lru_cache

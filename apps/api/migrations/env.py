@@ -6,7 +6,8 @@ from sqlalchemy import engine_from_config, pool
 import app.analysis.models
 import app.catalog.models
 import app.extraction.models
-import app.models  # noqa: F401
+import app.models
+import app.rag.models  # noqa: F401
 from app.db import Base
 from app.settings import get_settings
 
