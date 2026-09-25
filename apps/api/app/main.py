@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.analysis.api import router as analysis_router
 from app.catalog.api import router as catalog_router
 from app.extraction.api import router as extraction_router
 from app.routes.documents import router as documents_router
@@ -16,6 +17,7 @@ app = FastAPI(title="Tender Drone Advisor API", version="0.1.0")
 app.include_router(documents_router)
 app.include_router(extraction_router)
 app.include_router(catalog_router)
+app.include_router(analysis_router)
 
 
 @app.exception_handler(HTTPException)

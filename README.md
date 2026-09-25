@@ -82,3 +82,12 @@ and persisted human-review items. Defaults use a credentials-free fake that hone
 routes missing requirements to review. No feasibility or cost decision is produced.
 See [C03 extraction](docs/C03_EXTRACTION.md) for contracts, the graph, review APIs,
 configuration, checks and exact opt-in live verification commands.
+
+## C04 catalog and C05 deterministic analysis
+
+See [catalog and retrieval](docs/C04_CATALOG_RETRIEVAL.md) for versioned synthetic
+catalog imports, and [solver and costing](docs/C05_SOLVER_COSTING.md) for bounded
+configuration generation, typed analysis APIs, immutable inputs, integer BOM
+costing, review routing and reproducible Compose smoke checks.
+
+C05 makes no LLM calls and does not imply engineering or flight approval.

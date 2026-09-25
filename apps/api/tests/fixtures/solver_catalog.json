@@ -1,0 +1,599 @@
+{
+  "idempotency_key": "synthetic-c05-catalog-v1",
+  "version": {
+    "version": "synthetic-c05-v1",
+    "source": "synthetic-demo",
+    "status": "draft",
+    "effective_from": "2026-01-01"
+  },
+  "suppliers": [
+    {
+      "supplier_code": "SYN-C05",
+      "name": "Synthetic C05 Supplier",
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    }
+  ],
+  "items": [
+    {
+      "catalog_version": "synthetic-c05-v1",
+      "supplier_code": "SYN-C05",
+      "sku": "S5-FRAME",
+      "item_version": 1,
+      "manufacturer": "Synthetic C05 Works",
+      "category": "platform",
+      "name": "S5-FRAME",
+      "description": "Synthetic demonstration component; no real engineering claims.",
+      "weight_grams": 1000,
+      "cost_paise": 200000,
+      "currency": "INR",
+      "inventory_qty": 100,
+      "lead_time_days": 7,
+      "availability": "in_stock",
+      "specs": {
+        "mtow_kg": 15,
+        "payload_kg": 3,
+        "interfaces": [
+          "mount",
+          "power",
+          "uart",
+          "gimbal"
+        ],
+        "assembly": {
+          "slots": [
+            {
+              "category": "motor",
+              "quantity": 4,
+              "options": [
+                {
+                  "sku": "S5-MOTOR",
+                  "item_version": 1
+                }
+              ],
+              "baseline": {
+                "sku": "S5-MOTOR",
+                "item_version": 1
+              }
+            },
+            {
+              "category": "esc",
+              "quantity": 4,
+              "options": [
+                {
+                  "sku": "S5-ESC-CHEAP",
+                  "item_version": 1
+                },
+                {
+                  "sku": "S5-ESC-VALID",
+                  "item_version": 1
+                },
+                {
+                  "sku": "S5-ESC-OVER",
+                  "item_version": 1
+                }
+              ],
+              "baseline": {
+                "sku": "S5-ESC-VALID",
+                "item_version": 1
+              }
+            },
+            {
+              "category": "battery",
+              "quantity": 1,
+              "options": [
+                {
+                  "sku": "S5-BATTERY",
+                  "item_version": 1
+                },
+                {
+                  "sku": "S5-BATTERY-LIGHT",
+                  "item_version": 1
+                },
+                {
+                  "sku": "S5-BATTERY-UNAVAILABLE",
+                  "item_version": 1
+                }
+              ],
+              "baseline": {
+                "sku": "S5-BATTERY",
+                "item_version": 1
+              }
+            },
+            {
+              "category": "propeller",
+              "quantity": 4,
+              "options": [
+                {
+                  "sku": "S5-PROP",
+                  "item_version": 1
+                }
+              ],
+              "baseline": {
+                "sku": "S5-PROP",
+                "item_version": 1
+              }
+            },
+            {
+              "category": "flight_controller",
+              "quantity": 1,
+              "options": [
+                {
+                  "sku": "S5-FC",
+                  "item_version": 1
+                }
+              ],
+              "baseline": {
+                "sku": "S5-FC",
+                "item_version": 1
+              }
+            },
+            {
+              "category": "navigation",
+              "quantity": 1,
+              "options": [
+                {
+                  "sku": "S5-NAV",
+                  "item_version": 1
+                }
+              ],
+              "baseline": {
+                "sku": "S5-NAV",
+                "item_version": 1
+              }
+            },
+            {
+              "category": "communication",
+              "quantity": 1,
+              "options": [
+                {
+                  "sku": "S5-RADIO",
+                  "item_version": 1
+                }
+              ],
+              "baseline": {
+                "sku": "S5-RADIO",
+                "item_version": 1
+              }
+            },
+            {
+              "category": "camera",
+              "quantity": 1,
+              "options": [
+                {
+                  "sku": "S5-CAMERA",
+                  "item_version": 1
+                }
+              ],
+              "baseline": {
+                "sku": "S5-CAMERA",
+                "item_version": 1
+              }
+            }
+          ],
+          "platform_type": "multirotor",
+          "rotor_count": 4,
+          "provenance": "Synthetic assembly qualified for listed options only; demonstration, not manufacturer claims."
+        },
+        "envelope": {
+          "max_mass_g": 14000,
+          "max_payload_g": 3000,
+          "range_m": 50000,
+          "endurance_s": 3000,
+          "average_power_w": 400,
+          "provenance": "Synthetic demonstration envelope valid for all assembly options within declared loads."
+        },
+        "altitude_m": 3000,
+        "speed_m_s": 15,
+        "wind_m_s": 10,
+        "min_temperature_k": 253.15,
+        "max_temperature_k": 323.15,
+        "ip_rating": "IP54",
+        "compliance": [
+          "SYN-STD"
+        ],
+        "testing": [
+          "SYN-TEST"
+        ],
+        "warranty_s": 31536000
+      },
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    },
+    {
+      "catalog_version": "synthetic-c05-v1",
+      "supplier_code": "SYN-C05",
+      "sku": "S5-MOTOR",
+      "item_version": 1,
+      "manufacturer": "Synthetic C05 Works",
+      "category": "motor",
+      "name": "S5-MOTOR",
+      "description": "Synthetic demonstration component; no real engineering claims.",
+      "weight_grams": 250,
+      "cost_paise": 90000,
+      "currency": "INR",
+      "inventory_qty": 100,
+      "lead_time_days": 7,
+      "availability": "in_stock",
+      "specs": {
+        "max_current_a": 10,
+        "voltage_v": 22.2,
+        "interface": "mount"
+      },
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    },
+    {
+      "catalog_version": "synthetic-c05-v1",
+      "supplier_code": "SYN-C05",
+      "sku": "S5-ESC-CHEAP",
+      "item_version": 1,
+      "manufacturer": "Synthetic C05 Works",
+      "category": "esc",
+      "name": "S5-ESC-CHEAP",
+      "description": "Synthetic demonstration component; no real engineering claims.",
+      "weight_grams": 40,
+      "cost_paise": 10000,
+      "currency": "INR",
+      "inventory_qty": 100,
+      "lead_time_days": 7,
+      "availability": "in_stock",
+      "specs": {
+        "max_current_a": 5,
+        "voltage_v": 22.2,
+        "interface": "power"
+      },
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    },
+    {
+      "catalog_version": "synthetic-c05-v1",
+      "supplier_code": "SYN-C05",
+      "sku": "S5-ESC-VALID",
+      "item_version": 1,
+      "manufacturer": "Synthetic C05 Works",
+      "category": "esc",
+      "name": "S5-ESC-VALID",
+      "description": "Synthetic demonstration component; no real engineering claims.",
+      "weight_grams": 80,
+      "cost_paise": 30000,
+      "currency": "INR",
+      "inventory_qty": 100,
+      "lead_time_days": 7,
+      "availability": "in_stock",
+      "specs": {
+        "max_current_a": 15,
+        "min_voltage_v": 18,
+        "max_voltage_v": 25.2,
+        "interface": "power"
+      },
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    },
+    {
+      "catalog_version": "synthetic-c05-v1",
+      "supplier_code": "SYN-C05",
+      "sku": "S5-ESC-OVER",
+      "item_version": 1,
+      "manufacturer": "Synthetic C05 Works",
+      "category": "esc",
+      "name": "S5-ESC-OVER",
+      "description": "Synthetic demonstration component; no real engineering claims.",
+      "weight_grams": 140,
+      "cost_paise": 50000,
+      "currency": "INR",
+      "inventory_qty": 100,
+      "lead_time_days": 7,
+      "availability": "in_stock",
+      "specs": {
+        "max_current_a": 30,
+        "min_voltage_v": 18,
+        "max_voltage_v": 25.2,
+        "interface": "power"
+      },
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    },
+    {
+      "catalog_version": "synthetic-c05-v1",
+      "supplier_code": "SYN-C05",
+      "sku": "S5-BATTERY",
+      "item_version": 1,
+      "manufacturer": "Synthetic C05 Works",
+      "category": "battery",
+      "name": "S5-BATTERY",
+      "description": "Synthetic demonstration component; no real engineering claims.",
+      "weight_grams": 1500,
+      "cost_paise": 400000,
+      "currency": "INR",
+      "inventory_qty": 100,
+      "lead_time_days": 7,
+      "availability": "in_stock",
+      "specs": {
+        "max_current_a": 60,
+        "voltage_v": 22.2,
+        "cells": 6,
+        "capacity_c": 144000,
+        "interface": "power"
+      },
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    },
+    {
+      "catalog_version": "synthetic-c05-v1",
+      "supplier_code": "SYN-C05",
+      "sku": "S5-BATTERY-LIGHT",
+      "item_version": 1,
+      "manufacturer": "Synthetic C05 Works",
+      "category": "battery",
+      "name": "S5-BATTERY-LIGHT",
+      "description": "Synthetic demonstration component; no real engineering claims.",
+      "weight_grams": 1000,
+      "cost_paise": 650000,
+      "currency": "INR",
+      "inventory_qty": 100,
+      "lead_time_days": 7,
+      "availability": "in_stock",
+      "specs": {
+        "max_current_a": 60,
+        "voltage_v": 22.2,
+        "cells": 6,
+        "capacity_c": 72000,
+        "interface": "power"
+      },
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    },
+    {
+      "catalog_version": "synthetic-c05-v1",
+      "supplier_code": "SYN-C05",
+      "sku": "S5-BATTERY-UNAVAILABLE",
+      "item_version": 1,
+      "manufacturer": "Synthetic C05 Works",
+      "category": "battery",
+      "name": "S5-BATTERY-UNAVAILABLE",
+      "description": "Synthetic demonstration component; no real engineering claims.",
+      "weight_grams": 900,
+      "cost_paise": 10000,
+      "currency": "INR",
+      "inventory_qty": 0,
+      "lead_time_days": 7,
+      "availability": "unavailable",
+      "specs": {
+        "max_current_a": 60,
+        "voltage_v": 22.2,
+        "cells": 6,
+        "capacity_c": 144000,
+        "interface": "power"
+      },
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    },
+    {
+      "catalog_version": "synthetic-c05-v1",
+      "supplier_code": "SYN-C05",
+      "sku": "S5-PROP",
+      "item_version": 1,
+      "manufacturer": "Synthetic C05 Works",
+      "category": "propeller",
+      "name": "S5-PROP",
+      "description": "Synthetic demonstration component; no real engineering claims.",
+      "weight_grams": 80,
+      "cost_paise": 12000,
+      "currency": "INR",
+      "inventory_qty": 100,
+      "lead_time_days": 7,
+      "availability": "in_stock",
+      "specs": {
+        "diameter_m": 0.4,
+        "interface": "mount"
+      },
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    },
+    {
+      "catalog_version": "synthetic-c05-v1",
+      "supplier_code": "SYN-C05",
+      "sku": "S5-FC",
+      "item_version": 1,
+      "manufacturer": "Synthetic C05 Works",
+      "category": "flight_controller",
+      "name": "S5-FC",
+      "description": "Synthetic demonstration component; no real engineering claims.",
+      "weight_grams": 90,
+      "cost_paise": 100000,
+      "currency": "INR",
+      "inventory_qty": 100,
+      "lead_time_days": 7,
+      "availability": "in_stock",
+      "specs": {
+        "interface": "uart"
+      },
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    },
+    {
+      "catalog_version": "synthetic-c05-v1",
+      "supplier_code": "SYN-C05",
+      "sku": "S5-NAV",
+      "item_version": 1,
+      "manufacturer": "Synthetic C05 Works",
+      "category": "navigation",
+      "name": "S5-NAV",
+      "description": "Synthetic demonstration component; no real engineering claims.",
+      "weight_grams": 50,
+      "cost_paise": 80000,
+      "currency": "INR",
+      "inventory_qty": 100,
+      "lead_time_days": 7,
+      "availability": "in_stock",
+      "specs": {
+        "constellation": "multi",
+        "interface": "uart"
+      },
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    },
+    {
+      "catalog_version": "synthetic-c05-v1",
+      "supplier_code": "SYN-C05",
+      "sku": "S5-RADIO",
+      "item_version": 1,
+      "manufacturer": "Synthetic C05 Works",
+      "category": "communication",
+      "name": "S5-RADIO",
+      "description": "Synthetic demonstration component; no real engineering claims.",
+      "weight_grams": 120,
+      "cost_paise": 120000,
+      "currency": "INR",
+      "inventory_qty": 100,
+      "lead_time_days": 7,
+      "availability": "in_stock",
+      "specs": {
+        "range_m": 50000,
+        "interface": "uart"
+      },
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    },
+    {
+      "catalog_version": "synthetic-c05-v1",
+      "supplier_code": "SYN-C05",
+      "sku": "S5-CAMERA",
+      "item_version": 1,
+      "manufacturer": "Synthetic C05 Works",
+      "category": "camera",
+      "name": "S5-CAMERA",
+      "description": "Synthetic demonstration component; no real engineering claims.",
+      "weight_grams": 400,
+      "cost_paise": 450000,
+      "currency": "INR",
+      "inventory_qty": 100,
+      "lead_time_days": 7,
+      "availability": "in_stock",
+      "specs": {
+        "sensor": "rgb",
+        "payload_kg": 0.4,
+        "interface": "gimbal"
+      },
+      "provenance": {
+        "source": "synthetic-demo"
+      }
+    }
+  ],
+  "prices": [
+    {
+      "sku": "S5-FRAME",
+      "item_version": 1,
+      "amount_paise": 200000,
+      "currency": "INR",
+      "effective_from": "2026-01-01"
+    },
+    {
+      "sku": "S5-MOTOR",
+      "item_version": 1,
+      "amount_paise": 90000,
+      "currency": "INR",
+      "effective_from": "2026-01-01"
+    },
+    {
+      "sku": "S5-ESC-CHEAP",
+      "item_version": 1,
+      "amount_paise": 10000,
+      "currency": "INR",
+      "effective_from": "2026-01-01"
+    },
+    {
+      "sku": "S5-ESC-VALID",
+      "item_version": 1,
+      "amount_paise": 30000,
+      "currency": "INR",
+      "effective_from": "2026-01-01"
+    },
+    {
+      "sku": "S5-ESC-OVER",
+      "item_version": 1,
+      "amount_paise": 50000,
+      "currency": "INR",
+      "effective_from": "2026-01-01"
+    },
+    {
+      "sku": "S5-BATTERY",
+      "item_version": 1,
+      "amount_paise": 400000,
+      "currency": "INR",
+      "effective_from": "2026-01-01"
+    },
+    {
+      "sku": "S5-BATTERY-LIGHT",
+      "item_version": 1,
+      "amount_paise": 650000,
+      "currency": "INR",
+      "effective_from": "2026-01-01"
+    },
+    {
+      "sku": "S5-BATTERY-UNAVAILABLE",
+      "item_version": 1,
+      "amount_paise": 10000,
+      "currency": "INR",
+      "effective_from": "2026-01-01"
+    },
+    {
+      "sku": "S5-PROP",
+      "item_version": 1,
+      "amount_paise": 12000,
+      "currency": "INR",
+      "effective_from": "2026-01-01"
+    },
+    {
+      "sku": "S5-FC",
+      "item_version": 1,
+      "amount_paise": 100000,
+      "currency": "INR",
+      "effective_from": "2026-01-01"
+    },
+    {
+      "sku": "S5-NAV",
+      "item_version": 1,
+      "amount_paise": 80000,
+      "currency": "INR",
+      "effective_from": "2026-01-01"
+    },
+    {
+      "sku": "S5-RADIO",
+      "item_version": 1,
+      "amount_paise": 120000,
+      "currency": "INR",
+      "effective_from": "2026-01-01"
+    },
+    {
+      "sku": "S5-CAMERA",
+      "item_version": 1,
+      "amount_paise": 450000,
+      "currency": "INR",
+      "effective_from": "2026-01-01"
+    }
+  ],
+  "compatibility_rules": [
+    {
+      "from_sku": "S5-MOTOR",
+      "from_version": 1,
+      "to_sku": "S5-ESC-CHEAP",
+      "to_version": 1,
+      "rule_type": "incompatible",
+      "reason": "Synthetic 5A ESC is below the 10A motor current requirement."
+    }
+  ]
+}
