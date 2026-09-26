@@ -1,13 +1,14 @@
 import logging
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from redis import Redis
 from rq import Queue
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.audit import record_audit
 from app.db import get_db
-from app.ingestion import IngestionError, create_or_get_document, validate_upload
+from app.ingestion import IngestionError, create_or_get_document, sanitize_filename, validate_upload
 from app.models import Document, DocumentVersion, IngestionJob, SourceSpan
 from app.schemas import (
     DocumentStatusResponse,
@@ -17,11 +18,14 @@ from app.schemas import (
     SourceSpanResponse,
     UploadResponse,
 )
+from app.security import Actor, Role, require_authenticated, require_roles
 from app.settings import get_settings
 from app.storage import ObjectStorage, get_storage
 
 LOGGER = logging.getLogger(__name__)
-router = APIRouter(prefix="/v1/documents", tags=["documents"])
+router = APIRouter(
+    prefix="/v1/documents", tags=["documents"], dependencies=[Depends(require_authenticated)]
+)
 
 
 def get_queue() -> Queue:
@@ -64,24 +68,28 @@ def _status_response(
     },
 )
 async def upload_document(
+    request: Request,
     response: Response,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     storage: ObjectStorage = Depends(get_storage),
     queue: Queue = Depends(get_queue),
+    actor: Actor = Depends(require_roles(Role.ADMIN, Role.REVIEWER)),
 ) -> UploadResponse:
     settings = get_settings()
     body = await file.read(settings.max_upload_bytes + 1)
     try:
         content_type = validate_upload(
-            file.filename, file.content_type, len(body), settings.max_upload_bytes
+            file.filename, file.content_type, len(body), settings.max_upload_bytes, body
         )
+        filename = sanitize_filename(file.filename)
         document, version, job, idempotent = create_or_get_document(
             db,
             storage,
-            filename=file.filename or "unnamed",
+            filename=filename,
             content_type=content_type,
             body=body,
+            workspace_id=actor.workspace_id,
         )
     except IngestionError as exc:
         status_code = 413 if exc.code == "file_too_large" else 415
@@ -98,6 +106,16 @@ async def upload_document(
         or 0
     )
     if idempotent:
+        record_audit(
+            db,
+            request,
+            actor,
+            action="document.upload",
+            resource_type="document",
+            resource_id=document.id,
+            details={"idempotent": True, "byte_size": len(body)},
+        )
+        db.commit()
         response.status_code = status.HTTP_200_OK
         return UploadResponse(
             **_status_response(document, version, job, span_count, idempotent=True).model_dump()
@@ -106,6 +124,15 @@ async def upload_document(
     try:
         queued_job = queue.enqueue("app.tasks.ingest_document_task", version.id, job_timeout=120)
         job.queue_job_id = queued_job.id
+        record_audit(
+            db,
+            request,
+            actor,
+            action="document.upload",
+            resource_type="document",
+            resource_id=document.id,
+            details={"idempotent": False, "byte_size": len(body)},
+        )
         db.commit()
     except Exception as exc:
         job.error_code = "queue_unavailable"
@@ -117,8 +144,7 @@ async def upload_document(
             detail={"error": "queue_unavailable", "detail": job.error_message},
         ) from exc
 
-    response = UploadResponse(**_status_response(document, version, job, span_count).model_dump())
-    return response
+    return UploadResponse(**_status_response(document, version, job, span_count).model_dump())
 
 
 @router.get(
@@ -126,9 +152,11 @@ async def upload_document(
     response_model=DocumentStatusResponse,
     responses={404: {"model": ErrorResponse}},
 )
-def get_document(document_id: str, db: Session = Depends(get_db)) -> DocumentStatusResponse:
+def get_document(
+    document_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_authenticated)
+) -> DocumentStatusResponse:
     document = db.get(Document, document_id)
-    if document is None:
+    if document is None or (not actor.demo and document.workspace_id != actor.workspace_id):
         raise HTTPException(
             status_code=404, detail={"error": "not_found", "detail": "Document was not found."}
         )
@@ -159,9 +187,11 @@ def get_document(document_id: str, db: Session = Depends(get_db)) -> DocumentSta
     response_model=SourceSpanListResponse,
     responses={404: {"model": ErrorResponse}},
 )
-def list_source_spans(document_id: str, db: Session = Depends(get_db)) -> SourceSpanListResponse:
+def list_source_spans(
+    document_id: str, db: Session = Depends(get_db), actor: Actor = Depends(require_authenticated)
+) -> SourceSpanListResponse:
     document = db.get(Document, document_id)
-    if document is None:
+    if document is None or (not actor.demo and document.workspace_id != actor.workspace_id):
         raise HTTPException(
             status_code=404, detail={"error": "not_found", "detail": "Document was not found."}
         )
@@ -202,11 +232,18 @@ def list_source_spans(document_id: str, db: Session = Depends(get_db)) -> Source
     responses={404: {"model": ErrorResponse}},
 )
 def get_source_span(
-    document_id: str, span_id: str, db: Session = Depends(get_db)
+    document_id: str,
+    span_id: str,
+    db: Session = Depends(get_db),
+    actor: Actor = Depends(require_authenticated),
 ) -> SourceSpanResponse:
     document = db.get(Document, document_id)
     span = db.get(SourceSpan, span_id)
-    if document is None or span is None:
+    if (
+        document is None
+        or span is None
+        or (not actor.demo and document.workspace_id != actor.workspace_id)
+    ):
         raise HTTPException(
             status_code=404, detail={"error": "not_found", "detail": "Source span was not found."}
         )

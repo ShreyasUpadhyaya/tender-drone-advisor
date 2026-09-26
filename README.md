@@ -115,3 +115,37 @@ The visible **Local Demo Mode** banner is intentional: the local workspace does
 not implement login or authorization. C08/production hardening must provide
 authentication, RBAC, tenant isolation, signed uploads and per-user audit
 attribution. Do not expose the local demo to untrusted networks.
+
+## C08 quick start, demo and troubleshooting
+
+The final local flow is credentials-free by default: fake extraction/RAG adapters
+are used and `DEMO_MODE=true` is visible in the UI. Start with:
+
+```powershell
+$env:LLM_PROVIDER="fake"
+$env:LLM_MODEL="fixture-v1"
+$env:RAG_EMBEDDING_PROVIDER="fake"
+$env:RAG_REPORT_PROVIDER="fake"
+docker compose up --build -d
+docker compose exec -T api alembic current
+```
+
+These explicit process overrides take precedence over any untracked `.env` used
+for an earlier live-model gate. Verify the provider names before uploading test
+data; never print secret values.
+
+Then follow [the synthetic feasible and needs-review checklist](docs/DEMO_CHECKLIST.md).
+For the full click-by-click upload, review-decision, manual-inventory, scenario,
+BOM and export walkthrough, use [manual testing](docs/MANUAL_TESTING.md).
+The feasible fixture is intentionally marked and is the only fake path that
+returns deterministic cited requirements; normal fake inputs safely route to
+review. For health, use `http://localhost:8000/health`; for dependency readiness
+in demo mode, use `http://localhost:8000/v1/ops/readiness`.
+
+If a service is unavailable, run `docker compose ps`, then
+`docker compose logs --tail=100 api worker`. Do not paste `.env` values into logs
+or issue reports. A `job_stale` response is recovered by repeating the original
+idempotent action; it is not a reason to edit historical runs. See
+[production readiness](docs/C08_PRODUCTION_READINESS.md) and the
+[deployment runbook](docs/DEPLOYMENT_RUNBOOK.md) for implemented controls,
+production integration boundaries and backup/rollback guidance.

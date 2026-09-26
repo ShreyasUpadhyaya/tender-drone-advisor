@@ -18,7 +18,10 @@ from app.catalog.models import CatalogItem, CatalogPrice, CatalogVersion, Compat
 from app.db import SessionLocal
 from app.extraction.contracts import ValidatedRequirement
 from app.extraction.models import EvidenceLink, ExtractionRun, RequirementRecord, ReviewIssue
+from app.inventory.models import InventoryRecord, InventoryVersion
 from app.models import DocumentVersion, SourceSpan
+from app.observability import metrics, stage_timer
+from app.scenarios.models import ScenarioAssumption, ScenarioVersion
 from app.solver.contracts import SOLVER_VERSION, Item, Price, Requirement, Rule, Snapshot
 from app.solver.explanations import issue
 from app.solver.numbers import SolverError, scaled
@@ -41,6 +44,36 @@ def capture(db, request):
         raise SolverError("extraction_not_terminal")
     version = db.get(DocumentVersion, run.document_version_id)
     requirements = []
+    scenario_assumption_requirement_ids = set()
+    if run.model_config.get("provider") == "reviewer-scenario":
+        scenario_assumption_requirement_ids = set(
+            db.scalars(
+                select(ScenarioAssumption.requirement_id).where(
+                    ScenarioAssumption.scenario_version_id
+                    == run.model_config.get("scenario_version_id")
+                )
+            ).all()
+        )
+    scenario = (
+        db.get(ScenarioVersion, run.model_config.get("scenario_version_id"))
+        if run.model_config.get("provider") == "reviewer-scenario"
+        else None
+    )
+    preferred_by_category: dict[str, set[str]] = {}
+    inventory_by_item: dict[str, InventoryVersion] = {}
+    if scenario:
+        for item in db.scalars(
+            select(CatalogItem).where(
+                CatalogItem.catalog_version_id == catalog.id,
+                CatalogItem.sku.in_(scenario.component_preferences),
+            )
+        ):
+            preferred_by_category.setdefault(item.category, set()).add(item.sku)
+        for version_id in scenario.inventory_version_ids:
+            inventory = db.get(InventoryVersion, version_id)
+            record = db.get(InventoryRecord, inventory.record_id) if inventory else None
+            if inventory and record and record.catalog_item_id:
+                inventory_by_item[record.catalog_item_id] = inventory
     for row in db.scalars(
         select(RequirementRecord)
         .where(RequirementRecord.run_id == run.id)
@@ -48,7 +81,10 @@ def capture(db, request):
     ):
         req = ValidatedRequirement.model_validate(row.payload)
         links = db.scalars(select(EvidenceLink).where(EvidenceLink.requirement_id == row.id)).all()
-        if not req.validated_evidence or len(links) != len(req.validated_evidence):
+        is_internal_assumption = row.id in scenario_assumption_requirement_ids
+        if (not is_internal_assumption and not req.validated_evidence) or len(links) != len(
+            req.validated_evidence
+        ):
             raise SolverError("requirement_evidence_invalid")
         for anchor in req.validated_evidence:
             span = db.get(SourceSpan, anchor.span_id)
@@ -81,11 +117,43 @@ def capture(db, request):
         .order_by(CatalogItem.sku, CatalogItem.item_version)
     ).all()
     for item in rows:
+        if (
+            item.category in preferred_by_category
+            and item.sku not in preferred_by_category[item.category]
+        ):
+            continue
         prices = db.scalars(
             select(CatalogPrice)
             .where(CatalogPrice.item_id == item.id)
             .order_by(CatalogPrice.effective_from, CatalogPrice.id)
         ).all()
+        manual = inventory_by_item.get(item.id)
+        inventory_qty = item.inventory_qty
+        availability = item.availability
+        lead_time_days = item.lead_time_days
+        provenance = dict(item.provenance)
+        if manual:
+            arrived = (
+                manual.expected_quantity
+                if manual.expected_on and manual.expected_on <= request.analysis_date
+                else 0
+            )
+            inventory_qty = manual.on_hand_quantity + arrived
+            if inventory_qty > 0:
+                availability = "in_stock"
+                lead_time_days = 0
+            elif manual.expected_quantity and manual.expected_on:
+                availability = "backorder"
+                lead_time_days = max(0, (manual.expected_on - request.analysis_date).days)
+            else:
+                availability = "unavailable"
+                lead_time_days = 0
+            provenance["manual_inventory"] = {
+                "version_id": manual.id,
+                "version_number": manual.version_number,
+                "recorded_by": manual.recorded_by_subject,
+                "location": manual.location,
+            }
         items.append(
             Item(
                 id=item.id,
@@ -97,13 +165,13 @@ def capture(db, request):
                 manufacturer=item.manufacturer,
                 weight_g=scaled(item.weight_kg, 1000),
                 lifecycle_status=item.lifecycle_status,
-                availability=item.availability,
-                inventory_qty=item.inventory_qty,
-                lead_time_days=item.lead_time_days,
+                availability=availability,
+                inventory_qty=inventory_qty,
+                lead_time_days=lead_time_days,
                 supplier_id=item.supplier_id,
                 supplier_active=item.supplier.active if item.supplier else None,
                 specs=item.specs,
-                provenance=item.provenance,
+                provenance=provenance,
                 prices=[
                     Price(
                         id=p.id,
@@ -184,7 +252,10 @@ def create_analysis(db, request):
 
 
 def execute_analysis(analysis_id, session_factory=SessionLocal):
-    with session_factory() as db:
+    with (
+        stage_timer("analysis", trace_id=str(analysis_id), job_id=str(analysis_id)),
+        session_factory() as db,
+    ):
         claimed = db.execute(
             update(AnalysisRun)
             .where(AnalysisRun.id == analysis_id, AnalysisRun.state == "queued")
@@ -271,6 +342,9 @@ def execute_analysis(analysis_id, session_factory=SessionLocal):
                 "rejected": [r.model_dump(mode="json") for r in result.rejected],
             }
             db.commit()
+            metrics.increment(
+                "tda_solver_outcomes_total", outcome=str(row.outcome), status=str(row.status)
+            )
             LOGGER.info(
                 "analysis_completed id=%s status=%s count=%d",
                 row.id,
@@ -290,4 +364,10 @@ def execute_analysis(analysis_id, session_factory=SessionLocal):
             )
             row.finished_at = datetime.now(UTC)
             db.commit()
-            LOGGER.warning("analysis_failed id=%s code=%s", analysis_id, row.error_code)
+            metrics.increment("tda_solver_failures_total", code=str(row.error_code))
+            LOGGER.warning(
+                "analysis_failed id=%s code=%s exception_type=%s",
+                analysis_id,
+                row.error_code,
+                type(exc).__name__,
+            )

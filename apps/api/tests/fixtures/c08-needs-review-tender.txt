@@ -1,0 +1,4 @@
+TDA_DEMO_NEEDS_REVIEW
+Synthetic demonstration tender only. The buyer requests aerial survey support but
+does not state payload capacity, range, endurance, or communications constraints.
+The correct system result is needs review with clarification questions.

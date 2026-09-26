@@ -32,6 +32,10 @@ export const inr = (paise) =>
   paise == null
     ? "Price unavailable"
     : `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
+export const humanLabel = (value) =>
+  String(value)
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
 export async function requestJson(path, init = {}) {
   const response = await globalThis.fetch(`http://localhost:8000${path}`, init);
   const body = await response.json();

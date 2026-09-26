@@ -63,7 +63,7 @@ export function humanLabel(value?: string | null) {
   const raw = value ?? "not started";
   return (
     labelOverrides[raw] ??
-    raw.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
+    raw.replace(/[_-]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())
   );
 }
 

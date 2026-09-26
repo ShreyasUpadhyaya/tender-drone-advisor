@@ -11,6 +11,8 @@ class ObjectStorage(Protocol):
 
     def get_bytes(self, key: str) -> bytes: ...
 
+    def check_ready(self) -> None: ...
+
 
 class S3ObjectStorage:
     def __init__(self, settings: Settings) -> None:
@@ -34,6 +36,9 @@ class S3ObjectStorage:
 
     def get_bytes(self, key: str) -> bytes:
         return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+
+    def check_ready(self) -> None:
+        self.client.list_buckets()
 
 
 def get_storage() -> ObjectStorage:

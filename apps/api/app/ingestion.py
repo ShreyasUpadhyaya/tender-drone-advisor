@@ -1,6 +1,9 @@
 import hashlib
 import logging
+import re
+import zipfile
 from collections.abc import Callable
+from io import BytesIO
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +19,7 @@ ALLOWED_CONTENT_TYPES = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".txt": "text/plain",
 }
+SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class IngestionError(Exception):
@@ -26,7 +30,11 @@ class IngestionError(Exception):
 
 
 def validate_upload(
-    filename: str | None, content_type: str | None, byte_size: int, max_bytes: int
+    filename: str | None,
+    content_type: str | None,
+    byte_size: int,
+    max_bytes: int,
+    body: bytes | None = None,
 ) -> str:
     suffix = f".{filename.rsplit('.', 1)[-1].lower()}" if filename and "." in filename else ""
     expected_type = ALLOWED_CONTENT_TYPES.get(suffix)
@@ -42,7 +50,42 @@ def validate_upload(
         raise IngestionError("empty_file", "The uploaded file is empty.")
     if byte_size > max_bytes:
         raise IngestionError("file_too_large", f"The upload exceeds the {max_bytes}-byte limit.")
+    if body is not None:
+        _validate_signature(expected_type, body)
     return expected_type
+
+
+def sanitize_filename(filename: str | None) -> str:
+    """Keep a safe display name; object storage uses opaque stable IDs."""
+    leaf = (filename or "unnamed").replace("\\", "/").rsplit("/", 1)[-1]
+    safe = SAFE_FILENAME.sub("-", leaf).strip(".-")[:180]
+    if not safe or "." not in safe:
+        raise IngestionError("invalid_filename", "The filename must include a supported extension.")
+    return safe
+
+
+def _validate_signature(content_type: str, body: bytes) -> None:
+    if content_type == "application/pdf" and not body.startswith(b"%PDF-"):
+        raise IngestionError("file_signature_mismatch", "The uploaded PDF signature is invalid.")
+    if content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        try:
+            with zipfile.ZipFile(BytesIO(body)) as archive:
+                names = set(archive.namelist())
+                if "[Content_Types].xml" not in names or "word/document.xml" not in names:
+                    raise IngestionError(
+                        "file_signature_mismatch", "The uploaded DOCX structure is invalid."
+                    )
+        except zipfile.BadZipFile as exc:
+            raise IngestionError(
+                "file_signature_mismatch", "The uploaded DOCX signature is invalid."
+            ) from exc
+    if content_type == "text/plain":
+        try:
+            body.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise IngestionError(
+                "invalid_text_encoding", "TXT uploads must be UTF-8 encoded."
+            ) from exc
 
 
 def create_or_get_document(
@@ -52,10 +95,17 @@ def create_or_get_document(
     filename: str,
     content_type: str,
     body: bytes,
+    workspace_id: str = "local-demo",
 ) -> tuple[Document, DocumentVersion, IngestionJob, bool]:
     checksum = hashlib.sha256(body).hexdigest()
     existing = db.scalar(select(Document).where(Document.content_sha256 == checksum))
     if existing is not None:
+        if existing.workspace_id and existing.workspace_id != workspace_id:
+            # Global historical checksum uniqueness is retained; no document metadata
+            # is returned across workspaces and production can retry with an isolated store.
+            raise IngestionError(
+                "cross_workspace_duplicate", "The upload cannot be reused in this workspace."
+            )
         version = db.scalar(
             select(DocumentVersion)
             .where(DocumentVersion.document_id == existing.id)
@@ -69,7 +119,9 @@ def create_or_get_document(
         assert version is not None and job is not None
         return existing, version, job, True
 
-    document = Document(content_sha256=checksum, state=ProcessingState.UPLOADED)
+    document = Document(
+        content_sha256=checksum, workspace_id=workspace_id, state=ProcessingState.UPLOADED
+    )
     db.add(document)
     db.flush()
     storage_key = f"documents/{document.id}/versions/1/original"
@@ -140,6 +192,13 @@ def ingest_document(
         db.commit()
         body = storage.get_bytes(version.storage_key)
         chunks = parse_document(body, version.content_type)
+        max_page = max((chunk.page_number or 0 for chunk in chunks), default=0)
+        from app.settings import get_settings
+
+        if max_page > get_settings().max_document_pages:
+            raise IngestionError(
+                "page_limit_exceeded", "Document exceeds the configured page limit."
+            )
         chunk_count = persist_chunks(db, version, chunks)
         job.state = ProcessingState.COMPLETED
         version.document.state = ProcessingState.COMPLETED

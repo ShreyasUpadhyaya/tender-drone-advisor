@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import {
   canSubmit,
+  humanLabel,
   inr,
   poll,
   requestJson,
@@ -81,6 +82,7 @@ test("ingestion/extraction polling stops for completed, needs review, infeasible
 test("cost, citation, keyboard and responsive contracts are deterministic", () => {
   assert.equal(inr(2065800), "₹20,658.00");
   assert.equal(inr(null), "Price unavailable");
+  assert.equal(humanLabel("synthetic-c05-v1"), "Synthetic C05 V1");
   assert.equal(
     "button[aria-label], [role=dialog][aria-modal=true], @media(max-width:640px)".includes(
       "aria-modal",
@@ -98,7 +100,10 @@ test("decision view hides internal identifiers until technical details are opene
   assert.doesNotMatch(page, /Catalog version ID/);
   assert.doesNotMatch(page, /LangGraph extraction run/);
   assert.match(page, /currentCatalog\(\)/);
+  assert.match(page, /catalogVersions\(\)/);
   assert.match(page, /catalog-selection/);
+  assert.match(page, /aria-label="Catalog snapshot"/);
+  assert.match(page, /Refresh catalog snapshots/);
 });
 
 test("technical audit is collapsed and uses human workflow labels", () => {
@@ -106,6 +111,16 @@ test("technical audit is collapsed and uses human workflow labels", () => {
   assert.match(page, /Open technical audit trail/);
   assert.match(page, /humanLabel\(String\(node.node/);
   assert.match(page, /Technical audit trail/);
+  assert.doesNotMatch(page, /number="Audit"/);
+});
+
+test("review cards disclose decisions without overflowing their readable content", () => {
+  assert.match(page, /<details className="review-decision">/);
+  assert.match(page, /Record a review decision/);
+  assert.match(styles, /\.issue-grid \{[\s\S]*minmax\(0, 1fr\)/);
+  assert.match(styles, /\.review-action-row \{[\s\S]*minmax\(0, 1fr\)/);
+  assert.match(styles, /\.review-decision \{/);
+  assert.doesNotMatch(page, /number="Estimate"/);
 });
 
 test("requirements and review blockers use readable labels and evidence actions", () => {
@@ -152,4 +167,54 @@ test("responsive, overflow, export and accessible control contracts are present"
   assert.match(page, /aria-label="Tender file"/);
   assert.match(page, /aria-label="Citation source span"/);
   assert.match(page, /Export decision brief CSV/);
+});
+
+test("review workspace explains empty extraction state and functional filters", () => {
+  assert.match(page, /No accepted tender requirements/);
+  assert.match(page, /zero citation-valid requirements/);
+  assert.match(page, /Explore build scenarios/);
+  assert.match(page, /No \$\{filter === "all"/);
+  assert.match(page, /aria-pressed=\{filter === item\}/);
+  assert.match(page, /Review decision/);
+  assert.match(page, /Retry extraction/);
+  assert.match(page, /reviewWorkspace/);
+});
+
+test("scenario UI keeps estimates distinct from tender compliance", () => {
+  assert.match(page, /Explore build scenarios/);
+  assert.match(page, /Government tender safety boundary/);
+  assert.match(page, /Tender requirements verified/);
+  assert.match(page, /Engineering\/catalog feasibility/);
+  assert.match(page, /Bid\/compliance review/);
+  assert.match(page, /Create scenario estimate/);
+  assert.match(page, /cost_optimized/);
+  assert.match(page, /performance_oriented/);
+  assert.match(styles, /\.scenario-form/);
+  assert.match(styles, /\.review-action-row/);
+  assert.match(page, /Internal scenario assumption — not tender evidence/);
+  assert.match(page, /function openScenarioAnalysis/);
+  assert.match(page, /function platformName/);
+  assert.match(page, /Internal assumption:/);
+  assert.match(page, /Alternative build:/);
+  assert.match(page, /Decision support only — not a tender-compliance finding/);
+});
+
+test("admin inventory reconciliation is versioned, owner-gated and scenario scoped", () => {
+  assert.match(page, /Reconcile available stock/);
+  assert.match(page, /Only that same admin identity can revise/);
+  assert.match(page, /Item is not yet in the validated catalog/);
+  assert.match(page, /Pending catalog and engineering validation/);
+  assert.match(page, /Update count or availability/);
+  assert.match(page, /Inventory history/);
+  assert.match(page, /Manual inventory to snapshot for this scenario/);
+  assert.match(page, /inventory_record_ids: inventoryIds/);
+  assert.match(page, /record\.solver_eligible/);
+  assert.match(styles, /\.inventory-form/);
+});
+
+test("review decisions expose current state and append-only revision controls", () => {
+  assert.match(page, /Current review decision/);
+  assert.match(page, /Change recorded decision/);
+  assert.match(page, /supersedes_event_id: current\?\.id/);
+  assert.match(page, /event\.is_current \? "current" : "superseded"/);
 });

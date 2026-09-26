@@ -13,6 +13,53 @@ from app.extraction.contracts import PROMPT_VERSION, SCHEMA_VERSION, ExtractionB
 from app.settings import Settings
 
 
+def fake_fixture_response(inputs: object) -> str:
+    """Return deterministic requirements only for the explicitly labelled C08 fixture.
+
+    Ordinary fake extraction stays empty and routes to review. This supports an
+    offline browser demo without pretending that the fake adapter understands
+    arbitrary tender text.
+    """
+    # RunnableLambda receives the rendered ChatPromptValue, while unit tests can
+    # pass the narrow original mapping directly.
+    if isinstance(inputs, dict):
+        spans_payload = inputs["spans"]
+    else:
+        rendered = inputs.to_string()
+        spans_payload = rendered.partition("Source spans JSON: ")[2].partition("\nRepair errors:")[
+            0
+        ]
+    spans = json.loads(spans_payload)
+    source = next((span for span in spans if "TDA_DEMO_FEASIBLE" in span.get("text", "")), None)
+    if source is None:
+        return json.dumps({"schema_version": SCHEMA_VERSION, "requirements": []})
+    quote = source["text"]
+    values = [
+        ("platform", "platform", "enum", {"kind": "text", "value": "multirotor"}, ""),
+        ("range", "range", "minimum", {"kind": "scalar", "value": 25}, "km"),
+        ("endurance", "endurance", "minimum", {"kind": "scalar", "value": 30}, "min"),
+        ("payload", "payload", "minimum", {"kind": "scalar", "value": 2}, "kg"),
+    ]
+    return json.dumps(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "requirements": [
+                {
+                    "category": category,
+                    "attribute": attribute,
+                    "semantics": "mandatory",
+                    "operator": operator,
+                    "raw_value": raw_value,
+                    "original_unit": unit,
+                    "confidence": 0.98,
+                    "evidence": [{"span_id": source["span_id"], "quote": quote}],
+                }
+                for category, attribute, operator, raw_value, unit in values
+            ],
+        }
+    )
+
+
 class ProviderFailure(Exception):
     def __init__(self, code: str, recoverable: bool = False):
         self.code = code
@@ -148,10 +195,9 @@ class ModelAdapter:
 
 def build_adapter(settings: Settings) -> ModelAdapter:
     if settings.llm_provider == "fake":
-        # Plumbing demo only. No claim of extraction accuracy; empty output routes to review.
-        model = RunnableLambda(
-            lambda _: json.dumps({"schema_version": SCHEMA_VERSION, "requirements": []})
-        )
+        # Ordinary fake extraction routes to review. The explicit C08 fixture is
+        # the single deterministic offline feasible-demo path.
+        model = RunnableLambda(fake_fixture_response)
     elif settings.llm_provider == "openai":
         if not settings.llm_api_key.get_secret_value():
             raise ProviderFailure("provider_key_missing")

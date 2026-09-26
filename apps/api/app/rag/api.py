@@ -26,9 +26,10 @@ from app.rag.models import NodeAudit, RagJob
 from app.rag.providers import configuration, public_versions
 from app.rag.retrieval import search
 from app.routes.documents import get_queue
+from app.security import Role, require_authenticated, require_roles
 from app.settings import get_settings
 
-router = APIRouter(prefix="/v1/rag", tags=["rag"])
+router = APIRouter(prefix="/v1/rag", tags=["rag"], dependencies=[Depends(require_authenticated)])
 
 
 def require_job(db, job_id, kind=None):
@@ -96,6 +97,7 @@ def index_create(
     response: Response,
     db: Session = Depends(get_db),
     queue=Depends(get_queue),
+    _=Depends(require_roles(Role.ADMIN, Role.REVIEWER)),
 ):
     try:
         row, repeated = create_index(db, payload)
@@ -112,7 +114,11 @@ def index_status(index_id: UUID, db: Session = Depends(get_db)):
 
 
 @router.post("/search", response_model=SearchResponse)
-def hybrid_search(payload: SearchCreate, db: Session = Depends(get_db)):
+def hybrid_search(
+    payload: SearchCreate,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles(Role.ADMIN, Role.REVIEWER)),
+):
     try:
         return search(db, payload)
     except ProviderFailure as exc:
@@ -132,6 +138,7 @@ def graph_create(
     response: Response,
     db: Session = Depends(get_db),
     queue=Depends(get_queue),
+    _=Depends(require_roles(Role.ADMIN, Role.REVIEWER)),
 ):
     try:
         row, repeated = create_job(db, "graph", payload, configuration(get_settings()))
@@ -149,7 +156,11 @@ def graph_status(run_id: UUID, db: Session = Depends(get_db)):
 
 @router.post("/runs/{run_id}/resume", response_model=JobResponse)
 def graph_resume(
-    run_id: UUID, payload: ResumeRequest, db: Session = Depends(get_db), queue=Depends(get_queue)
+    run_id: UUID,
+    payload: ResumeRequest,
+    db: Session = Depends(get_db),
+    queue=Depends(get_queue),
+    _=Depends(require_roles(Role.ADMIN, Role.REVIEWER)),
 ):
     require_job(db, run_id, "graph")
     row = db.scalar(

@@ -2,7 +2,17 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -20,6 +30,9 @@ class Document(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     content_sha256: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    # Added in C08. Historic records remain readable in local demo mode; production
+    # requests require a populated workspace before document content is served.
+    workspace_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     state: Mapped[ProcessingState] = mapped_column(
         Enum(ProcessingState), default=ProcessingState.UPLOADED
     )
@@ -83,3 +96,21 @@ class SourceSpan(Base):
     extraction_method: Mapped[str] = mapped_column(String(16))
     text: Mapped[str] = mapped_column(Text)
     document_version: Mapped[DocumentVersion] = relationship(back_populates="spans")
+
+
+class AuditEvent(Base):
+    """Redacted, append-only application audit event (never stores tender text)."""
+
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    workspace_id: Mapped[str] = mapped_column(String(80), index=True)
+    actor_subject: Mapped[str] = mapped_column(String(160), index=True)
+    action: Mapped[str] = mapped_column(String(100), index=True)
+    resource_type: Mapped[str] = mapped_column(String(60))
+    resource_id: Mapped[str] = mapped_column(String(80), index=True)
+    request_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    trace_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    outcome: Mapped[str] = mapped_column(String(24), default="success")
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

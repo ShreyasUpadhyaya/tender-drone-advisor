@@ -29,8 +29,11 @@ from app.catalog.schemas import (
 from app.catalog.service import item_response, retrieve_candidates, retrieve_from_run
 from app.catalog.validation import validate_item_payload
 from app.db import get_db
+from app.security import Role, require_authenticated, require_roles
 
-router = APIRouter(prefix="/v1/catalog", tags=["catalog"])
+router = APIRouter(
+    prefix="/v1/catalog", tags=["catalog"], dependencies=[Depends(require_authenticated)]
+)
 
 
 def fail(code: str, detail: str, status: int = 422) -> HTTPException:
@@ -46,7 +49,9 @@ def version(db: Session, value: str) -> CatalogVersion:
 
 @router.post("/versions", response_model=CatalogVersionCreateResponse, status_code=201)
 def create_version(
-    payload: CatalogVersionCreate, db: Session = Depends(get_db)
+    payload: CatalogVersionCreate,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles(Role.ADMIN)),
 ) -> CatalogVersionCreateResponse:
     existing = db.scalar(select(CatalogVersion).where(CatalogVersion.version == payload.version))
     if existing:
@@ -93,8 +98,38 @@ def current_version(db: Session = Depends(get_db)) -> CurrentCatalogVersionRespo
     )
 
 
+@router.get("/versions", response_model=list[CurrentCatalogVersionResponse])
+def list_versions(db: Session = Depends(get_db)) -> list[CurrentCatalogVersionResponse]:
+    """List selectable, non-retired immutable catalog snapshots.
+
+    The client still sends an opaque snapshot ID to the deterministic solver;
+    this endpoint exists only so a local operator can select a documented
+    synthetic demo snapshot rather than relying on an implicit default.
+    """
+    rows = db.scalars(
+        select(CatalogVersion)
+        .where(CatalogVersion.status.in_(("current", "draft")))
+        .order_by(CatalogVersion.created_at.desc(), CatalogVersion.version)
+    ).all()
+    return [
+        CurrentCatalogVersionResponse(
+            id=UUID(row.id),
+            version=row.version,
+            status=row.status,
+            source=row.source,
+            effective_from=row.effective_from,
+            effective_to=row.effective_to,
+        )
+        for row in rows
+    ]
+
+
 @router.post("/import", response_model=CatalogImportResponse, status_code=201)
-def import_catalog(payload: CatalogImportRequest, db: Session = Depends(get_db)):
+def import_catalog(
+    payload: CatalogImportRequest,
+    db: Session = Depends(get_db),
+    _=Depends(require_roles(Role.ADMIN)),
+):
     ver = db.scalar(select(CatalogVersion).where(CatalogVersion.version == payload.version.version))
     if ver is None:
         ver = CatalogVersion(**payload.version.model_dump())
@@ -259,7 +294,9 @@ def import_catalog(payload: CatalogImportRequest, db: Session = Depends(get_db))
 
 
 @router.post("/items", response_model=CatalogItemResponse, status_code=201)
-def create_item(payload: CatalogItemCreate, db: Session = Depends(get_db)):
+def create_item(
+    payload: CatalogItemCreate, db: Session = Depends(get_db), _=Depends(require_roles(Role.ADMIN))
+):
     ver = version(db, payload.catalog_version)
     errors = validate_item_payload(payload.model_dump())
     if errors:
@@ -414,7 +451,9 @@ def prices(
 
 
 @router.post("/items/{item_id}/deactivate", response_model=CatalogItemResponse)
-def deactivate_item(item_id: UUID, db: Session = Depends(get_db)):
+def deactivate_item(
+    item_id: UUID, db: Session = Depends(get_db), _=Depends(require_roles(Role.ADMIN))
+):
     row = db.get(CatalogItem, str(item_id))
     if row is None:
         raise fail("not_found", "Catalog item was not found.", 404)

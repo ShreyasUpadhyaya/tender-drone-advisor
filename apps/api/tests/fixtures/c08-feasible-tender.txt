@@ -1,0 +1,5 @@
+TDA_DEMO_FEASIBLE
+Fixture contract: C08 deterministic extraction v2.
+Synthetic demonstration tender only. The buyer requests a multirotor platform,
+minimum range of 25 km, minimum endurance of 30 min, and payload capacity of 2 kg.
+This file contains no customer data and is designed solely for the offline C08 demo.

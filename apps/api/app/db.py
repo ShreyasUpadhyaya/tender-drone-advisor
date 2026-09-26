@@ -13,7 +13,13 @@ class Base(DeclarativeBase):
 def _engine_options(database_url: str) -> dict[str, object]:
     if database_url.startswith("sqlite"):
         return {"connect_args": {"check_same_thread": False}}
-    return {"pool_pre_ping": True}
+    # psycopg's server prepared statements are not required for this small,
+    # transactional workload. Disabling them avoids statement-name collisions
+    # when pipeline work is interrupted/replayed through pooled connections.
+    return {
+        "pool_pre_ping": True,
+        "connect_args": {"prepare_threshold": get_settings().psycopg_prepare_threshold},
+    }
 
 
 engine = create_engine(get_settings().database_url, **_engine_options(get_settings().database_url))

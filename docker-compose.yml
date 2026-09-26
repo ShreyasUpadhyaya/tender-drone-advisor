@@ -19,6 +19,16 @@ x-extraction-environment: &extraction-environment
   RAG_REPORT_PROVIDER: ${RAG_REPORT_PROVIDER:-fake}
   RAG_REPORT_MODEL: ${RAG_REPORT_MODEL:-fixture-report-v1}
   RAG_EXTERNAL_ENABLED: ${RAG_EXTERNAL_ENABLED:-false}
+  DEMO_MODE: ${DEMO_MODE:-true}
+  AUTH_MODE: ${AUTH_MODE:-demo}
+  OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
+  OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+  DEFAULT_WORKSPACE_ID: ${DEFAULT_WORKSPACE_ID:-local-demo}
+  MAX_DOCUMENT_PAGES: ${MAX_DOCUMENT_PAGES:-250}
+  UPLOAD_RATE_LIMIT_PER_MINUTE: ${UPLOAD_RATE_LIMIT_PER_MINUTE:-12}
+  GENERATION_RATE_LIMIT_PER_MINUTE: ${GENERATION_RATE_LIMIT_PER_MINUTE:-30}
+  JOB_STALE_SECONDS: ${JOB_STALE_SECONDS:-900}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
 services:
   postgres:
@@ -67,6 +77,7 @@ services:
       APP_ENV: ${APP_ENV:-development}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://tender_advisor:replace-with-local-password@postgres:5432/tender_advisor}
+      PSYCOPG_PREPARE_THRESHOLD: ${PSYCOPG_PREPARE_THRESHOLD:-}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_BUCKET: ${S3_BUCKET:-tender-documents}
@@ -102,6 +113,7 @@ services:
       <<: *extraction-environment
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://tender_advisor:replace-with-local-password@postgres:5432/tender_advisor}
+      PSYCOPG_PREPARE_THRESHOLD: ${PSYCOPG_PREPARE_THRESHOLD:-}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_BUCKET: ${S3_BUCKET:-tender-documents}

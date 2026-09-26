@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import ValidationError
 from rq import Queue
 from sqlalchemy import func, select
@@ -17,13 +17,17 @@ from app.analysis.schemas import (
     EvaluationResponse,
 )
 from app.analysis.service import create_analysis
+from app.audit import record_audit
 from app.catalog.api import fail
 from app.db import get_db
 from app.routes.documents import get_queue
+from app.security import Actor, Role, require_authenticated, require_roles
 from app.solver.contracts import Configuration, Issue
 from app.solver.numbers import SolverError
 
-router = APIRouter(prefix="/v1/analyses", tags=["analysis"])
+router = APIRouter(
+    prefix="/v1/analyses", tags=["analysis"], dependencies=[Depends(require_authenticated)]
+)
 
 
 def require_run(db, analysis_id):
@@ -61,8 +65,10 @@ def response_run(row, idempotent=False):
 def start_analysis(
     payload: AnalysisCreate,
     response: Response,
+    request: Request,
     db: Session = Depends(get_db),
     queue: Queue = Depends(get_queue),
+    actor: Actor = Depends(require_roles(Role.ADMIN, Role.REVIEWER)),
 ):
     try:
         run, repeated = create_analysis(db, payload)
@@ -88,6 +94,16 @@ def start_analysis(
                 job_timeout=300,
             )
             run.queue_job_id = job.id
+            record_audit(
+                db,
+                request,
+                actor,
+                action="analysis.start",
+                resource_type="analysis",
+                resource_id=run.id,
+                trace_id=run.id,
+                details={"idempotent": repeated},
+            )
             db.commit()
         except Exception:  # noqa: BLE001 -- never expose queue credentials
             db.rollback()

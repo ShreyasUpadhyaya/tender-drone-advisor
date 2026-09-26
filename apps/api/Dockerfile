@@ -12,6 +12,9 @@ COPY app ./app
 COPY alembic.ini ./
 COPY migrations ./migrations
 RUN pip install --no-cache-dir .
+RUN useradd --create-home --uid 10001 appuser \
+    && chown --recursive appuser:appuser /app
 
 EXPOSE 8000
+USER appuser
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

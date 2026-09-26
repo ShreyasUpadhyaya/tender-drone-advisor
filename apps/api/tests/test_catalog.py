@@ -110,6 +110,7 @@ def test_catalog_openapi_exposes_typed_success_responses(client):
     paths = schema["paths"]
     for path, method, status in [
         ("/v1/catalog/versions", "post", "201"),
+        ("/v1/catalog/versions", "get", "200"),
         ("/v1/catalog/versions/current", "get", "200"),
         ("/v1/catalog/retrieve", "post", "200"),
         ("/v1/catalog/retrieve-from-run/{run_id}", "post", "200"),
@@ -161,6 +162,22 @@ def test_catalog_import_is_idempotent_and_filters_candidates(client):
     all_items = client.get("/v1/catalog/items?limit=100").json()
     assert any(item["availability"] == "unavailable" for item in all_items)
     assert any(item["lifecycle_status"] == "deprecated" for item in all_items)
+
+
+def test_catalog_versions_list_exposes_selectable_historical_snapshots(client):
+    assert client.post("/v1/catalog/import", json=SEED).status_code == 201
+    response = client.post(
+        "/v1/catalog/versions",
+        json={"version": "c05-solver-demo-v1", "status": "draft", "source": "synthetic-demo"},
+    )
+    assert response.status_code == 201
+    versions = client.get("/v1/catalog/versions")
+    assert versions.status_code == 200
+    assert [row["version"] for row in versions.json()] == [
+        "c05-solver-demo-v1",
+        "demo-2026-09",
+    ]
+    assert all("id" in row and row["status"] in {"current", "draft"} for row in versions.json())
 
 
 def test_compatibility_availability_and_overspec_explanations(client):

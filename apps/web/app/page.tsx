@@ -13,13 +13,19 @@ import {
   api,
   type Analysis,
   type CandidateResponse,
+  type CatalogItem,
   type CatalogCandidate,
   type Configuration,
   type CurrentCatalogVersion,
   type DocumentStatus,
   type Evidence,
   type ExtractionRun,
+  type ExtractionIssue,
+  type InventoryRecord,
   type Requirement,
+  type ReviewWorkspace,
+  type Scenario,
+  type Session,
 } from "../lib/api";
 import {
   formatInr,
@@ -38,16 +44,7 @@ type Workspace = {
   configurations: Configuration[];
   report?: Record<string, unknown>;
 };
-type Issue = {
-  id?: string;
-  issue?: {
-    code?: string;
-    detail?: string;
-    requirement_index?: number | null;
-    blocking?: boolean;
-  };
-  state?: string;
-};
+type Issue = ExtractionIssue;
 const initial: Workspace = { configurations: [] };
 
 function Badge({ value }: { value?: string | null }) {
@@ -85,13 +82,17 @@ function SectionHeading({
   title,
   description,
 }: {
-  number?: string;
+  number?: number;
   title: string;
   description: string;
 }) {
   return (
     <div className="section-heading">
-      {number ? <span className="section-number">{number}</span> : null}
+      {number !== undefined ? (
+        <span className="section-number" aria-hidden="true">
+          {number}
+        </span>
+      ) : null}
       <div>
         <h2>{title}</h2>
         <p>{description}</p>
@@ -129,8 +130,17 @@ export default function HomePage() {
   const [workspace, setWorkspace] = useState<Workspace>(initial);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [issues, setIssues] = useState<Issue[]>([]);
+  const [reviewWorkspace, setReviewWorkspace] = useState<ReviewWorkspace>();
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [candidateResult, setCandidateResult] = useState<CandidateResponse>();
   const [catalog, setCatalog] = useState<CurrentCatalogVersion>();
+  const [catalogVersions, setCatalogVersions] = useState<
+    CurrentCatalogVersion[]
+  >([]);
+  const [selectedCatalogId, setSelectedCatalogId] = useState<string>();
+  const [session, setSession] = useState<Session>();
+  const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
+  const [inventory, setInventory] = useState<InventoryRecord[]>([]);
   const [ragNodes, setRagNodes] = useState<Record<string, unknown>[]>([]);
   const [ragCitations, setRagCitations] = useState<Record<string, unknown>[]>(
     [],
@@ -159,12 +169,41 @@ export default function HomePage() {
     },
     [],
   );
+  async function loadCatalogVersions() {
+    try {
+      const [current, versions] = await Promise.all([
+        api.currentCatalog(),
+        api.catalogVersions(),
+      ]);
+      setCatalog(current);
+      setCatalogVersions(versions);
+      setSelectedCatalogId((existing) =>
+        existing && versions.some((entry) => entry.id === existing)
+          ? existing
+          : current.id,
+      );
+    } catch {
+      // The workflow can still explain that no selectable catalog is configured.
+    }
+  }
   useEffect(() => {
-    api
-      .currentCatalog()
-      .then(setCatalog)
+    void loadCatalogVersions();
+    void Promise.all([api.session(), api.inventoryRecords()])
+      .then(([identity, records]) => {
+        setSession(identity);
+        setInventory(records);
+      })
       .catch(() => undefined);
   }, []);
+  const selectedCatalog =
+    catalogVersions.find((entry) => entry.id === selectedCatalogId) ?? catalog;
+  useEffect(() => {
+    if (!selectedCatalog) return;
+    void api
+      .catalogItems(selectedCatalog.version)
+      .then(setCatalogItems)
+      .catch(() => setCatalogItems([]));
+  }, [selectedCatalog]);
   const poll = (fetcher: () => Promise<boolean>, attempt = 0) => {
     if (attempt > 10) return;
     polling.current = setTimeout(
@@ -190,6 +229,8 @@ export default function HomePage() {
       });
       setRequirements([]);
       setIssues([]);
+      setReviewWorkspace(undefined);
+      setScenarios([]);
       setCandidateResult(undefined);
       setSelected(undefined);
       poll(async () => {
@@ -216,9 +257,36 @@ export default function HomePage() {
         const run = await api.extraction(extraction.trace_id);
         update({ extraction: run });
         if (isTerminal(run.state)) {
-          setRequirements(await api.requirements(run.trace_id));
-          setIssues((await api.extractionIssues(run.trace_id)) as Issue[]);
+          await loadReviewWorkspace(run.trace_id);
         }
+        return isTerminal(run.state);
+      });
+    } catch (caught) {
+      setError(message(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function loadReviewWorkspace(runId: string) {
+    const review = await api.reviewWorkspace(runId);
+    setReviewWorkspace(review);
+    setRequirements(review.accepted_requirements);
+    setIssues(review.issues);
+  }
+  async function retryExtraction() {
+    if (!workspace.extraction || busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const extraction = await api.retryExtraction(
+        workspace.extraction.trace_id,
+      );
+      update({ extraction });
+      setReviewWorkspace(undefined);
+      poll(async () => {
+        const run = await api.extraction(extraction.trace_id);
+        update({ extraction: run });
+        if (isTerminal(run.state)) await loadReviewWorkspace(run.trace_id);
         return isTerminal(run.state);
       });
     } catch (caught) {
@@ -277,6 +345,16 @@ export default function HomePage() {
       setError(message(caught));
     }
   }
+  async function openScenarioAnalysis(analysis: Analysis) {
+    update({ analysis });
+    if (!isTerminal(analysis.state)) return;
+    try {
+      const configurations = await api.configurations(analysis.id);
+      update({ analysis, configurations: configurations.configurations });
+    } catch (caught) {
+      setError(message(caught));
+    }
+  }
   async function startReport() {
     if (!workspace.analysis || busy) return;
     setBusy(true);
@@ -326,7 +404,8 @@ export default function HomePage() {
       >
         <strong>Local Demo Mode</strong>
         <span>
-          This prototype is intentionally open for local demonstrations.
+          Signed in as {session?.subject ?? "local demo operator"}. This
+          prototype grants a simulated admin role for local demonstrations.
           Production hardening adds authentication, role-based access, tenant
           isolation, signed uploads, and per-user audit attribution.
         </span>
@@ -356,7 +435,7 @@ export default function HomePage() {
 
       <section className="card section-card" id="upload">
         <SectionHeading
-          number="1"
+          number={1}
           title="Upload tender"
           description="Add the PDF, DOCX, or TXT tender you want to assess."
         />
@@ -390,7 +469,7 @@ export default function HomePage() {
       </section>
       <section className="card section-card" id="requirements">
         <SectionHeading
-          number="2"
+          number={2}
           title="Review requirements"
           description="Extract the tender requirements, then verify the evidence before matching a catalog."
         />
@@ -415,12 +494,52 @@ export default function HomePage() {
       <Requirements
         requirements={requirements}
         issues={issues}
+        extraction={workspace.extraction}
+        review={reviewWorkspace}
         onCitation={setCitation}
+        onRetry={() => void retryExtraction()}
+        onError={setError}
+        onReviewRecorded={() =>
+          workspace.extraction &&
+          void loadReviewWorkspace(workspace.extraction.trace_id)
+        }
       />
+
+      <InventoryWorkspace
+        session={session}
+        items={catalogItems}
+        records={inventory}
+        extraction={workspace.extraction}
+        requirements={requirements}
+        onChanged={(record) =>
+          setInventory((current) => [
+            record,
+            ...current.filter((value) => value.id !== record.id),
+          ])
+        }
+        onError={setError}
+      />
+
+      {workspace.extraction && selectedCatalog && (
+        <Scenarios
+          extraction={workspace.extraction}
+          catalog={selectedCatalog}
+          inventory={inventory}
+          scenarios={scenarios}
+          onCreated={(scenario) =>
+            setScenarios((current) => [
+              scenario,
+              ...current.filter((item) => item.id !== scenario.id),
+            ])
+          }
+          onOpenAnalysis={openScenarioAnalysis}
+          onError={setError}
+        />
+      )}
 
       <section className="card section-card" id="catalog">
         <SectionHeading
-          number="4"
+          number={4}
           title="Match catalog"
           description="Find available, compatible candidates. Matching remains provisional until key tender details are verified."
         />
@@ -443,7 +562,7 @@ export default function HomePage() {
       </section>
       <section className="card section-card" id="analysis">
         <SectionHeading
-          number="5"
+          number={5}
           title="Analyze configurations"
           description="The deterministic solver evaluates constraints, availability, lead time, BOM and cost."
         />
@@ -453,18 +572,36 @@ export default function HomePage() {
         <form onSubmit={analyse} className="form-row">
           <label>
             Catalog snapshot
-            <span className="catalog-selection">
-              {catalog
-                ? `${catalog.version} · ${humanLabel(catalog.status)}`
-                : "No current catalog snapshot is configured"}
-            </span>
-            <input
+            <select
+              aria-label="Catalog snapshot"
               name="catalogVersion"
-              type="hidden"
-              value={catalog?.id ?? ""}
-              readOnly
-            />
+              value={selectedCatalog?.id ?? ""}
+              onChange={(event) => setSelectedCatalogId(event.target.value)}
+              disabled={!selectedCatalog || busy}
+            >
+              {!selectedCatalog && (
+                <option>No catalog snapshot is configured</option>
+              )}
+              {catalogVersions.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {`${humanLabel(entry.version)} · ${humanLabel(entry.status)} · ${humanLabel(entry.source)}`}
+                </option>
+              ))}
+            </select>
+            {selectedCatalog && (
+              <span className="catalog-selection">
+                Immutable snapshot · {humanLabel(selectedCatalog.source)}
+              </span>
+            )}
           </label>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => void loadCatalogVersions()}
+            disabled={busy}
+          >
+            Refresh catalog snapshots
+          </button>
           <label>
             Analysis date
             <input
@@ -474,7 +611,7 @@ export default function HomePage() {
               defaultValue={new Date().toISOString().slice(0, 10)}
             />
           </label>
-          <button disabled={!extractedReady || !catalog || busy}>
+          <button disabled={!extractedReady || !selectedCatalog || busy}>
             Analyze configurations
           </button>
         </form>
@@ -504,7 +641,7 @@ export default function HomePage() {
       )}
       <section className="card section-card" id="recommendation">
         <SectionHeading
-          number="7"
+          number={7}
           title="Read recommendation"
           description="A grounded report organizes solver-backed facts and tender evidence; it cannot grant approval."
         />
@@ -544,7 +681,15 @@ export default function HomePage() {
         </p>
         <button
           onClick={() =>
-            downloadBrief(workspace, requirements, issues, selected, "csv")
+            downloadBrief(
+              workspace,
+              requirements,
+              issues,
+              scenarios,
+              workspace.configurations,
+              selected,
+              "csv",
+            )
           }
           disabled={!workspace.document}
         >
@@ -553,7 +698,15 @@ export default function HomePage() {
         <button
           className="secondary-button"
           onClick={() =>
-            downloadBrief(workspace, requirements, issues, selected, "print")
+            downloadBrief(
+              workspace,
+              requirements,
+              issues,
+              scenarios,
+              workspace.configurations,
+              selected,
+              "print",
+            )
           }
           disabled={!workspace.document}
         >
@@ -673,11 +826,21 @@ function ExtractionSummary({
 function Requirements({
   requirements,
   issues,
+  extraction,
+  review,
   onCitation,
+  onRetry,
+  onError,
+  onReviewRecorded,
 }: {
   requirements: Requirement[];
   issues: Issue[];
+  extraction?: ExtractionRun;
+  review?: ReviewWorkspace;
   onCitation: (value: Evidence | Record<string, unknown>) => void;
+  onRetry: () => void;
+  onError: (message: string) => void;
+  onReviewRecorded: () => void;
 }) {
   const [filter, setFilter] = useState("all");
   const filters = [
@@ -728,35 +891,169 @@ function Requirements({
     () => groupIssues(issues, requirements),
     [issues, requirements],
   );
+  const [decision, setDecision] = useState("mark_unresolved");
+  const [rationale, setRationale] = useState("");
+  const [correctedValue, setCorrectedValue] = useState("");
+  const [correctedUnit, setCorrectedUnit] = useState("");
+  const [saving, setSaving] = useState(false);
+  const evidenceDecision = [
+    "accept_verified_extraction",
+    "correct_transcription_or_normalization",
+  ].includes(decision);
+  const correctionDecision =
+    decision === "correct_transcription_or_normalization";
+  const submitDecision = async (
+    issue?: Issue,
+    requirement?: Requirement,
+    evidence?: Evidence,
+  ) => {
+    if (!extraction || !rationale.trim()) return;
+    if (evidenceDecision && !evidence) {
+      onError(
+        "This decision needs a cited tender source. Mark it unresolved or inspect source evidence first.",
+      );
+      return;
+    }
+    if (
+      correctionDecision &&
+      (!correctedValue.trim() || !correctedUnit.trim())
+    ) {
+      onError(
+        "Record a corrected value and unit with its cited tender source.",
+      );
+      return;
+    }
+    setSaving(true);
+    try {
+      const current = review?.events.find(
+        (event) => event.issue_id === issue?.id && event.is_current,
+      );
+      await api.recordReviewDecision(extraction.trace_id, {
+        action: decision,
+        rationale,
+        issue_id: issue?.id,
+        requirement_id: requirement?.id,
+        source_span_id: evidence?.span_id,
+        supersedes_event_id: current?.id,
+        before_value: requirement
+          ? {
+              value: requirement.requirement.original_value,
+              unit: requirement.requirement.original_unit,
+            }
+          : undefined,
+        after_value: correctionDecision
+          ? { value: correctedValue, unit: correctedUnit }
+          : undefined,
+      });
+      setRationale("");
+      setCorrectedValue("");
+      setCorrectedUnit("");
+      onReviewRecorded();
+    } finally {
+      setSaving(false);
+    }
+  };
+  const extractionPending =
+    extraction && ["queued", "processing"].includes(extraction.state);
+  const hasNoAccepted = Boolean(
+    review && review.counts.accepted === 0 && !extractionPending,
+  );
   return (
     <section className="card section-card" id="review">
       <SectionHeading
-        number="3"
+        number={3}
         title="Resolve clarifications"
         description="Verify each extracted tender clause and address anything that could change the build decision."
       />
-      <div className="filter-row" role="group" aria-label="Requirement filters">
-        {filters.map((item) => (
-          <button
-            key={item}
-            className={`filter-button ${filter === item ? "active" : ""}`}
-            onClick={() => setFilter(item)}
-            aria-pressed={filter === item}
-          >
-            {item === "all"
-              ? "All requirements"
-              : item === "low"
-                ? "Low confidence"
-                : item === "review"
-                  ? "Needs review"
-                  : humanLabel(item)}
-          </button>
-        ))}
-      </div>
-      {requirements.length === 0 ? (
+      {extraction ? (
+        <div className="review-state-summary" role="status">
+          <Badge value={extraction.state} />
+          <strong>
+            {extraction.state === "failed"
+              ? "Extraction failed safely"
+              : extractionPending
+                ? "Extraction is in progress"
+                : `${review?.counts.accepted ?? requirements.length} accepted tender requirement${(review?.counts.accepted ?? requirements.length) === 1 ? "" : "s"}`}
+          </strong>
+          <span>
+            {review
+              ? `${review.counts.rejected_or_unresolved} rejected or unresolved candidate${review.counts.rejected_or_unresolved === 1 ? "" : "s"}; ${review.counts.source_spans} source section${review.counts.source_spans === 1 ? "" : "s"} available.`
+              : "Loading the review workspace and source evidence."}
+          </span>
+          {extraction.state === "failed" ? (
+            <button className="secondary-button" onClick={onRetry}>
+              Retry extraction
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="review-state-summary">
+          <strong>Extraction has not started</strong>
+          <span>
+            Upload and complete ingestion, then select Extract requirements.
+          </span>
+        </div>
+      )}
+      {requirements.length > 0 && (
+        <div
+          className="filter-row"
+          role="group"
+          aria-label="Requirement filters"
+        >
+          {filters.map((item) => (
+            <button
+              key={item}
+              className={`filter-button ${filter === item ? "active" : ""}`}
+              onClick={() => setFilter(item)}
+              aria-pressed={filter === item}
+            >
+              {item === "all"
+                ? `All requirements (${requirements.length})`
+                : item === "low"
+                  ? "Low confidence"
+                  : item === "review"
+                    ? "Needs review"
+                    : humanLabel(item)}
+            </button>
+          ))}
+        </div>
+      )}
+      {!extraction ? (
         <EmptyState
-          title="Requirements will appear here"
-          detail="Finish extraction to review values, confidence and source pages."
+          title="Start with extraction"
+          detail="No tender requirements have been requested yet. Use Extract requirements after ingestion completes."
+        />
+      ) : extractionPending ? (
+        <EmptyState
+          title="Preparing review workspace"
+          detail="The current extraction stage is still running; accepted and rejected candidates will appear when it reaches a terminal state."
+        />
+      ) : extraction.state === "failed" ? (
+        <EmptyState
+          title="Extraction did not complete"
+          detail={`The failed stage is ${review?.failed_stage ? humanLabel(review.failed_stage) : "recorded in the technical audit"}. Retry creates a new linked run and keeps this attempt.`}
+        />
+      ) : hasNoAccepted ? (
+        <div className="empty-state actionable-empty">
+          <strong>No accepted tender requirements</strong>
+          <span>
+            This run completed with zero citation-valid requirements. It is not
+            a successful tender review.
+          </span>
+          <span>{review?.next_action}</span>
+          <a className="secondary-button" href="#scenarios">
+            Explore build scenarios
+          </a>
+        </div>
+      ) : requirements.length === 0 ? (
+        <EmptyState
+          title="Loading accepted requirements"
+          detail="The extraction completed; refresh the review workspace if this message persists."
+        />
+      ) : visible.length === 0 ? (
+        <EmptyState
+          title={`No ${filter === "all" ? "requirements" : humanLabel(filter).toLowerCase() + " requirements"} match this filter`}
+          detail={`Clear the ${humanLabel(filter)} filter to view all ${requirements.length} accepted tender requirements.`}
         />
       ) : (
         <>
@@ -787,6 +1084,15 @@ function Requirements({
                         {formatRequirementValue(
                           requirement.original_value,
                           requirement.original_unit,
+                        )}
+                        {requirement.normalized_value !== undefined && (
+                          <small>
+                            Normalized:{" "}
+                            {formatRequirementValue(
+                              requirement.normalized_value,
+                              requirement.normalized_unit,
+                            )}
+                          </small>
                         )}
                       </td>
                       <td>
@@ -868,9 +1174,126 @@ function Requirements({
                 </button>
               ) : (
                 <span className="muted">
-                  No source excerpt is available for this review item.
+                  Not specified in tender — this missing-information blocker has
+                  no source excerpt to verify.
                 </span>
               )}
+              {review?.events.find(
+                (event) =>
+                  event.issue_id === group.issue.id && event.is_current,
+              ) ? (
+                <div className="current-decision">
+                  <strong>Current review decision</strong>
+                  <span>
+                    {humanLabel(
+                      review.events.find(
+                        (event) =>
+                          event.issue_id === group.issue.id && event.is_current,
+                      )!.action,
+                    )}
+                  </span>
+                  <small>
+                    Recorded by{" "}
+                    {
+                      review.events.find(
+                        (event) =>
+                          event.issue_id === group.issue.id && event.is_current,
+                      )!.reviewer
+                    }
+                  </small>
+                </div>
+              ) : null}
+              {extraction ? (
+                <details className="review-decision">
+                  <summary>
+                    {review?.events.some(
+                      (event) =>
+                        event.issue_id === group.issue.id && event.is_current,
+                    )
+                      ? "Change recorded decision"
+                      : "Record a review decision"}
+                  </summary>
+                  <div className="review-action-row">
+                    <label>
+                      Review decision
+                      <select
+                        value={decision}
+                        onChange={(event) => setDecision(event.target.value)}
+                      >
+                        <option
+                          value="accept_verified_extraction"
+                          disabled={!group.evidence}
+                        >
+                          Accept verified extraction
+                        </option>
+                        <option
+                          value="correct_transcription_or_normalization"
+                          disabled={!group.evidence}
+                        >
+                          Correct transcription / normalization
+                        </option>
+                        <option value="mark_unresolved">Mark unresolved</option>
+                        <option value="reject_unsupported_extraction">
+                          Reject unsupported extraction
+                        </option>
+                        <option value="record_documented_assumption">
+                          Record documented assumption
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      Rationale
+                      <input
+                        value={rationale}
+                        onChange={(event) => setRationale(event.target.value)}
+                        placeholder="Record why this decision is appropriate"
+                      />
+                    </label>
+                    {correctionDecision ? (
+                      <>
+                        <label>
+                          Corrected value
+                          <input
+                            value={correctedValue}
+                            onChange={(event) =>
+                              setCorrectedValue(event.target.value)
+                            }
+                            placeholder="Value from cited tender text"
+                          />
+                        </label>
+                        <label>
+                          Corrected unit
+                          <input
+                            value={correctedUnit}
+                            onChange={(event) =>
+                              setCorrectedUnit(event.target.value)
+                            }
+                            placeholder="For example, km"
+                          />
+                        </label>
+                      </>
+                    ) : null}
+                    <button
+                      disabled={
+                        saving ||
+                        !rationale.trim() ||
+                        (evidenceDecision && !group.evidence) ||
+                        (correctionDecision &&
+                          (!correctedValue.trim() || !correctedUnit.trim()))
+                      }
+                      onClick={() =>
+                        void submitDecision(
+                          group.issue,
+                          group.requirement,
+                          group.evidence,
+                        )
+                      }
+                    >
+                      Record decision
+                    </button>
+                  </div>
+                </details>
+              ) : null}
             </article>
           ))}
         </div>
@@ -880,6 +1303,54 @@ function Requirements({
           detail="Validated issues and clarification actions will appear here when extraction finishes."
         />
       )}
+      {review?.rejected_candidates.length ? (
+        <>
+          <h3>Rejected or unresolved extraction candidates</h3>
+          <div className="issue-grid">
+            {review.rejected_candidates.map((candidate, index) => (
+              <article
+                className="issue-card"
+                key={`${candidate.ordinal}-${index}`}
+              >
+                <Badge value="needs_review" />
+                <h4>{candidate.title}</h4>
+                <p>{candidate.reason}</p>
+                {candidate.source ? (
+                  <button
+                    className="link-button"
+                    onClick={() => onCitation(candidate.source!)}
+                  >
+                    View source
+                  </button>
+                ) : (
+                  <span className="muted">
+                    No matching source evidence was retained for this rejected
+                    candidate.
+                  </span>
+                )}
+              </article>
+            ))}
+          </div>
+        </>
+      ) : null}
+      {review?.events.length ? (
+        <details className="technical-details">
+          <summary>Review decision history ({review.events.length})</summary>
+          <ul className="audit-list">
+            {review.events.map((event) => (
+              <li key={event.id}>
+                <strong>{humanLabel(event.action)}</strong>
+                <Badge value={event.is_current ? "current" : "superseded"} />
+                <span>
+                  {event.reviewer} ·{" "}
+                  {new Date(event.created_at).toLocaleString()}
+                </span>
+                <small>{event.rationale}</small>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </section>
   );
 }
@@ -895,6 +1366,8 @@ function groupIssues(issues: Issue[], requirements: Requirement[]) {
       affected: string[];
       evidence?: Evidence;
       blocking: boolean;
+      issue: Issue;
+      requirement?: Requirement;
     }
   >();
   for (const record of issues) {
@@ -918,6 +1391,8 @@ function groupIssues(issues: Issue[], requirements: Requirement[]) {
       affected: [],
       evidence: requirement?.requirement.validated_evidence[0],
       blocking: issue.blocking !== false,
+      issue: record,
+      requirement,
     };
     const label = requirement
       ? humanLabel(requirement.requirement.attribute)
@@ -942,10 +1417,784 @@ function categoryFromDetail(detail?: string) {
 }
 function actionForIssue(code?: string, requirement?: Requirement) {
   if (code?.includes("evidence"))
-    return "Confirm the source clause and re-run extraction if the evidence is incomplete.";
+    return "Inspect the cited clause first; correct transcription only with source evidence, or record it as unresolved.";
   if (code?.includes("unit") || code?.includes("normal"))
-    return "Ask the buyer to state the value and unit explicitly.";
-  return `Ask the buyer to provide a clear ${requirement ? humanLabel(requirement.requirement.attribute).toLowerCase() : "requirement"} value.`;
+    return "Inspect the tender, record “not specified in tender,” or create a unit-qualified internal assumption for an estimate.";
+  return requirement
+    ? `Inspect the tender, record “not specified,” or set an internal ${humanLabel(requirement.requirement.attribute).toLowerCase()} assumption for an estimate. Request clarification only if the procurement process allows it.`
+    : "Inspect source sections, record “not specified in tender,” or create an internal assumption for an estimate. Request clarification only where the process allows it.";
+}
+
+function InventoryWorkspace({
+  session,
+  items,
+  records,
+  extraction,
+  requirements,
+  onChanged,
+  onError,
+}: {
+  session?: Session;
+  items: CatalogItem[];
+  records: InventoryRecord[];
+  extraction?: ExtractionRun;
+  requirements: Requirement[];
+  onChanged: (record: InventoryRecord) => void;
+  onError: (message: string) => void;
+}) {
+  const [unlisted, setUnlisted] = useState(false);
+  const [itemId, setItemId] = useState("");
+  const [sku, setSku] = useState("");
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("payload");
+  const [manufacturer, setManufacturer] = useState("");
+  const [onHand, setOnHand] = useState("0");
+  const [expected, setExpected] = useState("0");
+  const [expectedOn, setExpectedOn] = useState("");
+  const [location, setLocation] = useState("");
+  const [rationale, setRationale] = useState("");
+  const [requirementId, setRequirementId] = useState("");
+  const [missingCategory, setMissingCategory] = useState("");
+  const [busy, setBusy] = useState(false);
+  const isAdmin = session?.roles.includes("admin") ?? false;
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!isAdmin || busy) return;
+    if ((!unlisted && !itemId) || !location.trim() || !rationale.trim()) {
+      onError(
+        "Choose a catalog item and record the stock location and rationale.",
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      const body: Record<string, unknown> = {
+        catalog_item_id: unlisted ? undefined : itemId,
+        sku: unlisted ? sku : undefined,
+        name: unlisted ? name : undefined,
+        category: unlisted ? category : undefined,
+        manufacturer: unlisted ? manufacturer : undefined,
+        on_hand_quantity: Number(onHand),
+        expected_quantity: Number(expected),
+        expected_on: Number(expected) > 0 ? expectedOn || undefined : undefined,
+        location,
+        rationale,
+        extraction_run_id: extraction?.trace_id,
+        requirement_ids: requirementId ? [requirementId] : [],
+        requirement_categories: missingCategory ? [missingCategory] : [],
+      };
+      onChanged(await api.createInventoryRecord(body));
+      setRationale("");
+      setOnHand("0");
+      setExpected("0");
+      setExpectedOn("");
+    } catch (caught) {
+      onError(message(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="card section-card inventory-card" id="inventory">
+      <SectionHeading
+        title="Reconcile available stock"
+        description="An administrator can tally on-hand or expected stock against tender needs. Counts are versioned overlays; catalog specifications and tender evidence stay immutable."
+      />
+      <Alert tone="info">
+        <strong>Administrative control.</strong>{" "}
+        {session?.subject ?? "The signed-in administrator"} owns each record
+        they create. Only that same admin identity can revise its count or
+        availability. Demo Mode simulates this identity; production uses
+        verified OIDC claims.
+      </Alert>
+      {!isAdmin ? (
+        <BlockedStep reason="Inventory reconciliation requires the admin role." />
+      ) : (
+        <form className="inventory-form" onSubmit={save}>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={unlisted}
+              onChange={(event) => setUnlisted(event.target.checked)}
+            />
+            Item is not yet in the validated catalog
+          </label>
+          {!unlisted ? (
+            <label>
+              Catalog item
+              <select
+                value={itemId}
+                onChange={(event) => setItemId(event.target.value)}
+                required
+              >
+                <option value="">Choose an item in stock</option>
+                {items.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name} · {item.sku} · catalog {item.inventory_qty}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <>
+              <label>
+                Internal SKU
+                <input
+                  value={sku}
+                  onChange={(event) => setSku(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Item name
+                <input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Category
+                <input
+                  value={category}
+                  onChange={(event) => setCategory(event.target.value)}
+                  required
+                />
+              </label>
+              <label>
+                Manufacturer
+                <input
+                  value={manufacturer}
+                  onChange={(event) => setManufacturer(event.target.value)}
+                  required
+                />
+              </label>
+            </>
+          )}
+          <label>
+            Counted on hand
+            <input
+              type="number"
+              min="0"
+              value={onHand}
+              onChange={(event) => setOnHand(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Expected later
+            <input
+              type="number"
+              min="0"
+              value={expected}
+              onChange={(event) => setExpected(event.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Expected date
+            <input
+              type="date"
+              value={expectedOn}
+              onChange={(event) => setExpectedOn(event.target.value)}
+              disabled={Number(expected) === 0}
+              required={Number(expected) > 0}
+            />
+          </label>
+          <label>
+            Stock location
+            <input
+              value={location}
+              onChange={(event) => setLocation(event.target.value)}
+              placeholder="Stores, assembly floor, supplier hold"
+              required
+            />
+          </label>
+          <label>
+            Link to accepted tender requirement
+            <select
+              value={requirementId}
+              onChange={(event) => setRequirementId(event.target.value)}
+            >
+              <option value="">No accepted requirement link</option>
+              {requirements.map((entry) => (
+                <option key={entry.id} value={entry.id}>
+                  {humanLabel(entry.requirement.attribute)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Missing/ambiguous category
+            <input
+              value={missingCategory}
+              onChange={(event) => setMissingCategory(event.target.value)}
+              placeholder="For example, endurance"
+            />
+          </label>
+          <label className="scenario-rationale">
+            Count rationale and provenance
+            <textarea
+              value={rationale}
+              onChange={(event) => setRationale(event.target.value)}
+              placeholder="How and when this stock was counted or confirmed"
+              required
+            />
+          </label>
+          <button disabled={busy}>
+            {busy ? "Recording stock…" : "Record inventory"}
+          </button>
+        </form>
+      )}
+      {records.length ? (
+        <div className="inventory-grid">
+          {records.map((record) => (
+            <article className="inventory-item" key={record.id}>
+              <div>
+                <Badge
+                  value={
+                    record.solver_eligible ? "catalog_linked" : "needs_review"
+                  }
+                />
+                <h3>{record.name}</h3>
+                <small>
+                  {record.sku} · {humanLabel(record.category)}
+                </small>
+              </div>
+              <dl>
+                <div>
+                  <dt>On hand</dt>
+                  <dd>{record.current.on_hand_quantity}</dd>
+                </div>
+                <div>
+                  <dt>Expected</dt>
+                  <dd>
+                    {record.current.expected_quantity}
+                    {record.current.expected_on
+                      ? ` on ${record.current.expected_on}`
+                      : ""}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Location</dt>
+                  <dd>{record.current.location}</dd>
+                </div>
+                <div>
+                  <dt>Recorded by</dt>
+                  <dd>{record.current.recorded_by_subject}</dd>
+                </div>
+              </dl>
+              {!record.solver_eligible ? (
+                <p className="muted">
+                  Pending catalog and engineering validation; tracked here but
+                  excluded from the solver.
+                </p>
+              ) : null}
+              <InventoryRevision
+                record={record}
+                session={session}
+                extraction={extraction}
+                onChanged={onChanged}
+                onError={onError}
+              />
+              <details className="technical-details">
+                <summary>Inventory history ({record.history.length})</summary>
+                <ul className="audit-list">
+                  {record.history.map((version) => (
+                    <li key={version.id}>
+                      <strong>
+                        Version {version.version_number}:{" "}
+                        {version.on_hand_quantity} on hand
+                      </strong>
+                      <span>
+                        {version.recorded_by_subject} ·{" "}
+                        {new Date(version.created_at).toLocaleString()}
+                      </span>
+                      <small>{version.rationale}</small>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyState
+          title="No manual stock recorded"
+          detail="Use a catalog item to tally usable stock, or log an unlisted item for later catalog validation."
+        />
+      )}
+    </section>
+  );
+}
+
+function InventoryRevision({
+  record,
+  session,
+  extraction,
+  onChanged,
+  onError,
+}: {
+  record: InventoryRecord;
+  session?: Session;
+  extraction?: ExtractionRun;
+  onChanged: (record: InventoryRecord) => void;
+  onError: (message: string) => void;
+}) {
+  const [onHand, setOnHand] = useState(String(record.current.on_hand_quantity));
+  const [expected, setExpected] = useState(
+    String(record.current.expected_quantity),
+  );
+  const [expectedOn, setExpectedOn] = useState(
+    record.current.expected_on ?? "",
+  );
+  const [location, setLocation] = useState(record.current.location);
+  const [rationale, setRationale] = useState("");
+  const allowed =
+    session?.roles.includes("admin") &&
+    session.subject === record.owner_subject;
+  const revise = async () => {
+    if (!allowed || !rationale.trim()) return;
+    try {
+      onChanged(
+        await api.reviseInventoryRecord(record.id, {
+          on_hand_quantity: Number(onHand),
+          expected_quantity: Number(expected),
+          expected_on:
+            Number(expected) > 0 ? expectedOn || undefined : undefined,
+          location,
+          rationale,
+          extraction_run_id: extraction?.trace_id,
+          requirement_ids: record.current.requirement_ids,
+          requirement_categories: record.current.requirement_categories,
+        }),
+      );
+      setRationale("");
+    } catch (caught) {
+      onError(message(caught));
+    }
+  };
+  return (
+    <details className="review-decision">
+      <summary>
+        {allowed
+          ? "Update count or availability"
+          : `Owned by ${record.owner_subject}`}
+      </summary>
+      {allowed ? (
+        <div className="review-action-row">
+          <label>
+            On hand
+            <input
+              type="number"
+              min="0"
+              value={onHand}
+              onChange={(event) => setOnHand(event.target.value)}
+            />
+          </label>
+          <label>
+            Expected later
+            <input
+              type="number"
+              min="0"
+              value={expected}
+              onChange={(event) => setExpected(event.target.value)}
+            />
+          </label>
+          <label>
+            Expected date
+            <input
+              type="date"
+              value={expectedOn}
+              onChange={(event) => setExpectedOn(event.target.value)}
+              disabled={Number(expected) === 0}
+            />
+          </label>
+          <label>
+            Location
+            <input
+              value={location}
+              onChange={(event) => setLocation(event.target.value)}
+            />
+          </label>
+          <label>
+            Reason for revision
+            <input
+              value={rationale}
+              onChange={(event) => setRationale(event.target.value)}
+            />
+          </label>
+          <button
+            type="button"
+            disabled={!rationale.trim()}
+            onClick={() => void revise()}
+          >
+            Save new inventory version
+          </button>
+        </div>
+      ) : (
+        <p className="muted">
+          Only the administrator who created this record may add an override
+          version.
+        </p>
+      )}
+    </details>
+  );
+}
+
+function Scenarios({
+  extraction,
+  catalog,
+  inventory,
+  scenarios,
+  onCreated,
+  onOpenAnalysis,
+  onError,
+}: {
+  extraction: ExtractionRun;
+  catalog: CurrentCatalogVersion;
+  inventory: InventoryRecord[];
+  scenarios: Scenario[];
+  onCreated: (scenario: Scenario) => void;
+  onOpenAnalysis: (analysis: Analysis) => void | Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [intent, setIntent] = useState("baseline");
+  const [category, setCategory] = useState("range");
+  const [attribute, setAttribute] = useState("range");
+  const [value, setValue] = useState("");
+  const [unit, setUnit] = useState("km");
+  const [rationale, setRationale] = useState("");
+  const [componentSkus, setComponentSkus] = useState("");
+  const [inventoryIds, setInventoryIds] = useState<string[]>([]);
+  const [assumptionDrafts, setAssumptionDrafts] = useState<
+    {
+      category: string;
+      attribute: string;
+      operator: string;
+      value: number;
+      unit: string;
+      rationale: string;
+      provenance: string;
+    }[]
+  >([]);
+  const [busy, setBusy] = useState(false);
+  const create = async (event: FormEvent) => {
+    event.preventDefault();
+    if (busy) return;
+    const assumptions = assumptionDrafts;
+    if (
+      value.trim() &&
+      (!Number.isFinite(Number(value)) || !rationale.trim())
+    ) {
+      onError(
+        "Enter a numeric assumption, explicit unit and rationale before estimating a scenario.",
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      const scenario = await api.startScenario({
+        extraction_run_id: extraction.trace_id,
+        catalog_version_id: catalog.id,
+        analysis_date: new Date().toISOString().slice(0, 10),
+        name: "Tender estimate scenarios",
+        intent,
+        reviewer: "local-demo-reviewer",
+        rationale:
+          rationale || "Baseline scenario without new internal assumptions.",
+        assumptions,
+        component_skus: componentSkus
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+        inventory_record_ids: inventoryIds,
+      });
+      onCreated(scenario);
+      const pollScenario = async (attempt = 0): Promise<void> => {
+        if (
+          attempt > 10 ||
+          ["completed", "failed"].includes(scenario.analysis.state)
+        )
+          return;
+        window.setTimeout(
+          async () => {
+            try {
+              const next = await api.scenario(scenario.id);
+              onCreated(next);
+              void onOpenAnalysis(next.analysis);
+              if (!["completed", "failed"].includes(next.analysis.state))
+                await pollScenario(attempt + 1);
+            } catch {
+              onError(
+                "The scenario was saved but its deterministic analysis could not be refreshed.",
+              );
+            }
+          },
+          Math.min(1000 * 2 ** attempt, 8000),
+        );
+      };
+      void onOpenAnalysis(scenario.analysis);
+      await pollScenario();
+    } catch (caught) {
+      onError(message(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const addAssumption = () => {
+    if (
+      !value.trim() ||
+      !Number.isFinite(Number(value)) ||
+      !unit.trim() ||
+      !rationale.trim()
+    ) {
+      onError(
+        "Enter a numeric proposed value, unit and rationale before adding an internal assumption.",
+      );
+      return;
+    }
+    setAssumptionDrafts((current) => [
+      ...current.filter((item) => item.attribute !== attribute),
+      {
+        category,
+        attribute,
+        operator: "minimum",
+        value: Number(value),
+        unit,
+        rationale,
+        provenance: "internal_assumption",
+      },
+    ]);
+    setValue("");
+  };
+  return (
+    <section className="card section-card scenario-card" id="scenarios">
+      <SectionHeading
+        title="Explore build scenarios"
+        description="Create a versioned internal estimate when a tender omits a capability. Tender facts stay immutable; assumptions never prove compliance."
+      />
+      <Alert tone="warning">
+        <strong>Government tender safety boundary.</strong> A feasible scenario
+        is an engineering/catalog estimate, not tender compliance, approval, bid
+        readiness or flight certification.
+      </Alert>
+      <div className="scenario-labels" aria-label="Scenario decision labels">
+        <span>
+          Tender requirements verified:{" "}
+          <strong>
+            {extraction.state === "completed" &&
+            extraction.review_state === "not_required"
+              ? "Yes"
+              : "No — unresolved"}
+          </strong>
+        </span>
+        <span>
+          Engineering/catalog feasibility:{" "}
+          <strong>Estimated by deterministic solver</strong>
+        </span>
+        <span>
+          Bid/compliance review: <strong>Required</strong>
+        </span>
+      </div>
+      <form className="scenario-form" onSubmit={create}>
+        <label>
+          Scenario type
+          <select
+            value={intent}
+            onChange={(event) => setIntent(event.target.value)}
+          >
+            <option value="baseline">Baseline</option>
+            <option value="cost_optimized">Cost-optimized</option>
+            <option value="performance_oriented">Performance-oriented</option>
+          </select>
+        </label>
+        <label>
+          Assumption category
+          <select
+            value={category}
+            onChange={(event) => {
+              setCategory(event.target.value);
+              setAttribute(event.target.value);
+            }}
+          >
+            <option value="range">Range</option>
+            <option value="endurance">Endurance</option>
+            <option value="payload">Payload</option>
+            <option value="quantity">Quantity</option>
+          </select>
+        </label>
+        <label>
+          Minimum proposed value
+          <input
+            value={value}
+            inputMode="decimal"
+            onChange={(event) => setValue(event.target.value)}
+            placeholder="Optional for baseline"
+          />
+        </label>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={addAssumption}
+        >
+          Add assumption
+        </button>
+        <label>
+          Unit
+          <input
+            value={unit}
+            onChange={(event) => setUnit(event.target.value)}
+            placeholder="km, min, kg or count"
+          />
+        </label>
+        <label>
+          Catalog SKU constraint (optional)
+          <input
+            value={componentSkus}
+            onChange={(event) => setComponentSkus(event.target.value)}
+            placeholder="Example: SYN-COMM-LR"
+          />
+        </label>
+        <label className="scenario-rationale">
+          Internal rationale and provenance
+          <textarea
+            value={rationale}
+            onChange={(event) => setRationale(event.target.value)}
+            placeholder="Why this is an internal estimate; use tender text only when separately cited."
+          />
+        </label>
+        <fieldset className="scenario-rationale inventory-selector">
+          <legend>Manual inventory to snapshot for this scenario</legend>
+          {inventory.length ? (
+            inventory.map((record) => (
+              <label className="checkbox-label" key={record.id}>
+                <input
+                  type="checkbox"
+                  checked={inventoryIds.includes(record.id)}
+                  disabled={!record.solver_eligible}
+                  onChange={(event) =>
+                    setInventoryIds((current) =>
+                      event.target.checked
+                        ? [...current, record.id]
+                        : current.filter((value) => value !== record.id),
+                    )
+                  }
+                />
+                {record.name}: {record.current.on_hand_quantity} on hand
+                {record.solver_eligible ? "" : " — pending catalog validation"}
+              </label>
+            ))
+          ) : (
+            <span className="muted">
+              No manually reconciled stock is available.
+            </span>
+          )}
+        </fieldset>
+        <button disabled={busy}>
+          {busy ? "Creating estimate…" : "Create scenario estimate"}
+        </button>
+      </form>
+      {assumptionDrafts.length ? (
+        <div className="assumption-list" aria-label="Scenario assumptions">
+          {assumptionDrafts.map((item) => (
+            <span key={item.attribute}>
+              {humanLabel(item.attribute)}: {item.value} {item.unit}
+              <button
+                type="button"
+                className="quiet-button"
+                aria-label={`Remove ${humanLabel(item.attribute)} assumption`}
+                onClick={() =>
+                  setAssumptionDrafts((current) =>
+                    current.filter(
+                      (entry) => entry.attribute !== item.attribute,
+                    ),
+                  )
+                }
+              >
+                Remove
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <p className="muted">
+        Catalog capabilities and prices are taken from the immutable{" "}
+        {humanLabel(catalog.version)} snapshot. An optional SKU constraint
+        limits only that catalog component category; missing prices and
+        engineering limits remain review blockers.
+      </p>
+      {scenarios.length ? (
+        <div className="scenario-grid">
+          {scenarios.map((scenario) => (
+            <article className="scenario-result" key={scenario.id}>
+              <Badge
+                value={scenario.analysis.status ?? scenario.analysis.state}
+              />
+              <h3>{humanLabel(scenario.intent)} scenario</h3>
+              <p>
+                {scenario.assumptions.length
+                  ? `${scenario.assumptions.length} internal assumption${scenario.assumptions.length === 1 ? "" : "s"} recorded.`
+                  : "No new assumptions recorded."}
+              </p>
+              {scenario.component_preferences.length ? (
+                <small>
+                  Catalog constraint:{" "}
+                  {scenario.component_preferences.join(", ")}
+                </small>
+              ) : null}
+              {scenario.inventory_overlays.length ? (
+                <small>
+                  Manual inventory snapshot:{" "}
+                  {scenario.inventory_overlays
+                    .map(
+                      (item) =>
+                        `${item.name} (${item.on_hand_quantity} on hand)`,
+                    )
+                    .join(", ")}
+                </small>
+              ) : null}
+              <dl>
+                <div>
+                  <dt>Tender requirements verified</dt>
+                  <dd>
+                    {scenario.tender_requirements_verified
+                      ? "Yes"
+                      : "No — unresolved"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Engineering/catalog feasibility</dt>
+                  <dd>
+                    {humanLabel(scenario.engineering_catalog_feasibility)}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Assumptions outstanding</dt>
+                  <dd>{scenario.assumptions_outstanding ? "Yes" : "No"}</dd>
+                </div>
+                <div>
+                  <dt>Bid/compliance review</dt>
+                  <dd>Required</dd>
+                </div>
+              </dl>
+              <button
+                className="secondary-button"
+                onClick={() => void onOpenAnalysis(scenario.analysis)}
+              >
+                View solver analysis
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <EmptyState
+          title="No scenario estimate yet"
+          detail="Use baseline, cost-optimized or performance-oriented scenarios to compare deterministic alternatives. Missing tender facts stay visibly unresolved."
+        />
+      )}
+    </section>
+  );
 }
 
 function ProvisionalNotice({ missing }: { missing: string[] }) {
@@ -1159,7 +2408,7 @@ function Comparison({
   return (
     <section className="card section-card" id="compare">
       <SectionHeading
-        number="6"
+        number={6}
         title="Compare cost and BOM"
         description="Compare only solver-evaluated configurations; the backend remains the cost and feasibility authority."
       />
@@ -1192,7 +2441,7 @@ function Comparison({
                         "No recommendation label"}
                     </small>
                   </td>
-                  <td>Selected platform</td>
+                  <td>{platformName(configuration)}</td>
                   <td>
                     {configuration.total_weight_g} g / {configuration.payload_g}{" "}
                     g
@@ -1318,7 +2567,10 @@ function ConfigurationDetail({
               <tr key={evaluation.requirement_id}>
                 <td>
                   {humanLabel(evaluation.requirement.attribute)}
-                  <small>{humanLabel(evaluation.requirement.category)}</small>
+                  {evaluation.requirement.attribute !==
+                  evaluation.requirement.category ? (
+                    <small>{humanLabel(evaluation.requirement.category)}</small>
+                  ) : null}
                 </td>
                 <td>
                   <Badge value={evaluation.result} />
@@ -1335,7 +2587,9 @@ function ConfigurationDetail({
                       View source
                     </button>
                   ) : (
-                    "No citation"
+                    <span className="assumption-evidence">
+                      Internal scenario assumption — not tender evidence
+                    </span>
                   )}
                 </td>
               </tr>
@@ -1350,6 +2604,14 @@ function ConfigurationDetail({
     </section>
   );
 }
+function platformName(configuration: Configuration) {
+  const platform = configuration.selections.find((selection) =>
+    ["platform", "airframe"].includes(selection.item.category),
+  );
+  return platform
+    ? `${platform.item.name} · ${platform.item.sku}`
+    : "Platform not recorded";
+}
 function Report({
   report,
   onCitation,
@@ -1361,6 +2623,43 @@ function Report({
     title: string;
     facts: { id: string; text: string; citation: Evidence }[];
   }[];
+  const readableFact = (text: string) => {
+    const structured =
+      text.trim().startsWith("{") || text.trim().startsWith("[");
+    if (structured) {
+      return "Structured catalog or configuration fact is available in the cited evidence.";
+    }
+    try {
+      const value = JSON.parse(text) as Record<string, unknown>;
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return text;
+      }
+      const name = typeof value.name === "string" ? value.name : undefined;
+      const sku = typeof value.sku === "string" ? value.sku : undefined;
+      const category =
+        typeof value.category === "string"
+          ? humanLabel(value.category)
+          : undefined;
+      const availability =
+        typeof value.availability === "string"
+          ? humanLabel(value.availability)
+          : undefined;
+      const weight =
+        typeof value.weight_g === "number" ? `${value.weight_g} g` : undefined;
+      const status =
+        typeof value.status === "string" ? humanLabel(value.status) : undefined;
+      const label = name ?? sku ?? category ?? status;
+      const details = [category, availability, weight, status].filter(
+        (entry, index, values) =>
+          entry && values.indexOf(entry) === index && entry !== label,
+      );
+      return label
+        ? [label, ...details].join(" · ")
+        : "Structured catalog or configuration fact is available in the cited evidence.";
+    } catch {
+      return text;
+    }
+  };
   return (
     <div className="report">
       <Alert>
@@ -1376,7 +2675,7 @@ function Report({
           <h3>{section.title}</h3>
           {section.facts.map((fact) => (
             <p key={fact.id}>
-              {fact.text}{" "}
+              {readableFact(fact.text)}{" "}
               <button
                 className="link-button"
                 onClick={() => onCitation(fact.citation)}
@@ -1410,7 +2709,6 @@ function TechnicalAudit({
   return (
     <section className="card section-card">
       <SectionHeading
-        number="Audit"
         title="Technical audit trail"
         description="Safe execution records support technical review without exposing prompts, secrets or full tender text."
       />
@@ -1510,6 +2808,8 @@ function downloadBrief(
   workspace: Workspace,
   requirements: Requirement[],
   issues: Issue[],
+  scenarios: Scenario[],
+  configurations: Configuration[],
   configuration: Configuration | undefined,
   format: "csv" | "print",
 ) {
@@ -1545,16 +2845,44 @@ function downloadBrief(
         ? "Needs review — not approved"
         : "Decision support only",
     ],
+    [
+      "Safety boundary",
+      "Decision support only — not a tender-compliance finding, bid approval or flight certification.",
+    ],
     ...requirements.map((row) => [
-      humanLabel(row.requirement.attribute),
+      `Tender fact: ${humanLabel(row.requirement.attribute)}`,
       formatRequirementValue(
         row.requirement.original_value,
         row.requirement.original_unit,
       ),
     ]),
+    ...requirements.flatMap((row) =>
+      row.requirement.validated_evidence.map((evidence) => [
+        `Source: ${humanLabel(row.requirement.attribute)}`,
+        `${evidence.page_number ? `Page ${evidence.page_number}` : "Page not recorded"}${evidence.section_name ? ` · ${evidence.section_name}` : ""}${evidence.quote ? ` · ${evidence.quote}` : ""}`,
+      ]),
+    ),
     ...issues.map((issue) => [
       "Review blocker",
       issue.issue?.detail ?? "Tender detail needs clarification",
+    ]),
+    ...scenarios.flatMap((scenario) => [
+      [
+        `Scenario: ${humanLabel(scenario.intent)}`,
+        `Tender requirements verified: ${scenario.tender_requirements_verified ? "Yes" : "No — unresolved"}; engineering/catalog feasibility: ${humanLabel(scenario.engineering_catalog_feasibility)}; assumptions outstanding: ${scenario.assumptions_outstanding ? "Yes" : "No"}; bid/compliance review: required.`,
+      ],
+      ...scenario.assumptions.map((assumption) => [
+        `Internal assumption: ${humanLabel(assumption.attribute)}`,
+        `${formatRequirementValue(assumption.original_value, assumption.original_unit)} · ${assumption.rationale} · ${humanLabel(assumption.provenance)}`,
+      ]),
+      ...scenario.inventory_overlays.map((inventory) => [
+        `Manual inventory snapshot: ${inventory.name}`,
+        `${inventory.sku} · on hand ${inventory.on_hand_quantity} · expected ${inventory.expected_quantity}${inventory.expected_on ? ` on ${inventory.expected_on}` : ""} · recorded by ${inventory.recorded_by_subject} · ${inventory.solver_eligible ? "catalog-linked solver input" : "pending catalog validation; excluded from solver"}`,
+      ]),
+    ]),
+    ...configurations.map((candidate) => [
+      `Alternative build: ${platformName(candidate)}`,
+      `${humanLabel(candidate.status)} · material ${formatInr(candidate.cost.material_paise)} · total ${formatInr(candidate.cost.total_paise)} · ${candidate.total_weight_g} g · ${candidate.lead_time_days} days · ${candidate.immediately_buildable ? "available" : "not immediately buildable"}.`,
     ]),
     ...configurationRows,
   ];
