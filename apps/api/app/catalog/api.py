@@ -391,11 +391,14 @@ def retrieve(payload: RetrievalRequest, db: Session = Depends(get_db)) -> Retrie
 def retrieve_run(
     run_id: UUID,
     db: Session = Depends(get_db),
+    catalog_version: str | None = None,
     category: str | None = None,
     limit: int = Query(default=20, ge=1, le=100),
 ) -> RetrievalResponse:
     try:
-        return RetrievalResponse.model_validate(retrieve_from_run(db, str(run_id), category, limit))
+        return RetrievalResponse.model_validate(
+            retrieve_from_run(db, str(run_id), category, limit, catalog_version)
+        )
     except ValueError as exc:
         raise fail("retrieval_rejected", str(exc), 409) from exc
 

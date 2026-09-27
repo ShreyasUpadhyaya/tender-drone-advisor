@@ -167,6 +167,9 @@ test("responsive, overflow, export and accessible control contracts are present"
   assert.match(page, /aria-label="Tender file"/);
   assert.match(page, /aria-label="Citation source span"/);
   assert.match(page, /Export decision brief CSV/);
+  assert.match(page, /new Blob\(\["\\uFEFF", csv\]/);
+  assert.match(page, /text\/csv;charset=utf-8/);
+  assert.match(page, /formatInr\(configuration\.cost\.material_paise\)/);
 });
 
 test("review workspace explains empty extraction state and functional filters", () => {
@@ -217,4 +220,45 @@ test("review decisions expose current state and append-only revision controls", 
   assert.match(page, /Change recorded decision/);
   assert.match(page, /supersedes_event_id: current\?\.id/);
   assert.match(page, /event\.is_current \? "current" : "superseded"/);
+});
+
+test("grounded report renders a human decision brief without raw retrieval payloads", () => {
+  const report = page.slice(
+    page.indexOf("function Report("),
+    page.indexOf("function TechnicalAudit("),
+  );
+  assert.doesNotMatch(report, /catalog_context/);
+  assert.doesNotMatch(report, /fact\.text/);
+  assert.doesNotMatch(report, /JSON\.parse/);
+  assert.match(report, /Decision summary/);
+  assert.match(report, /Tender verification/);
+  assert.match(report, /Selected components/);
+  assert.match(report, /Final estimated cost/);
+  assert.match(report, /Warnings and compliance caveats/);
+  assert.match(report, /safeReason\(evaluation\.explanation\)/);
+  assert.match(page, /Technical report metadata/);
+});
+
+test("catalog changes invalidate downstream state without discarding extraction", () => {
+  const change = page.slice(
+    page.indexOf("function changeCatalog("),
+    page.indexOf("const poll ="),
+  );
+  assert.match(change, /setCandidateResult\(undefined\)/);
+  assert.match(change, /analysis: undefined/);
+  assert.match(change, /configurations: \[\]/);
+  assert.match(change, /report: undefined/);
+  assert.doesNotMatch(change, /extraction: undefined/);
+  assert.match(page, /No analysis has been run for this catalog/);
+  assert.match(page, /retrieveCandidates\([\s\S]*selectedCatalog\.version/);
+});
+
+test("scenario assumptions use server-supported units and catalog-compatible stock", () => {
+  assert.match(page, /api\.assumptionUnits\(\)/);
+  assert.match(page, /setUnit\(assumptionUnits\[nextCategory\]\?\.\[0\]/);
+  assert.match(page, /supportedUnits\.includes\(unit\)/);
+  assert.match(page, /role="alert"/);
+  assert.match(page, /disabled=\{!compatibleInventory\(record\)\}/);
+  assert.match(page, /recorded under a different catalog snapshot/);
+  assert.match(page, /different catalog snapshot/);
 });

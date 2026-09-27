@@ -6,7 +6,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, JsonValue, m
 from app.catalog.schemas import canonical_json_date
 from app.extraction.contracts import ValidatedRequirement
 
-SOLVER_VERSION = "solver-v1.0.0"
+SOLVER_VERSION = "solver-v1.0.1"
 MAX_INTEGER = 2**63 - 1
 
 
@@ -201,7 +201,7 @@ class Snapshot(Contract):
     catalog_effective_from: ISODate | None = None
     catalog_effective_to: ISODate | None = None
     analysis_date: ISODate
-    solver_version: Literal["solver-v1.0.0"] = SOLVER_VERSION
+    solver_version: Literal["solver-v1.0.1"] = SOLVER_VERSION
     policy: SolverPolicy
     requirements: list[Requirement]
     items: list[Item]

@@ -667,6 +667,19 @@ td {
   color: #344054;
   line-height: 1.6;
 }
+.report-list {
+  display: grid;
+  gap: 8px;
+  padding-left: 20px;
+  color: #344054;
+  line-height: 1.5;
+}
+.field-error {
+  align-self: center;
+  color: #b42318;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
 .drawer {
   position: fixed;
   inset: 0;

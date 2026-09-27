@@ -4,6 +4,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import func, select
+from test_solver import SEED as SOLVER_SEED
+from test_solver import example_snapshot
 
 from app.catalog.models import CatalogVersion
 from app.db import SessionLocal
@@ -335,3 +337,60 @@ def test_retrieval_from_c03_run_preserves_review_and_evidence(client):
         db.get(ExtractionRun, run_id).schema_version = "requirements-v1"
         db.commit()
     assert client.post(f"/v1/catalog/retrieve-from-run/{run_id}").status_code == 409
+
+
+def test_retrieval_from_run_uses_requested_catalog_and_platform_envelope(client):
+    assert client.post("/v1/catalog/import", json=SEED).status_code == 201
+    assert client.post("/v1/catalog/import", json=SOLVER_SEED).status_code == 201
+    snapshot = example_snapshot()
+    with SessionLocal() as db:
+        run = ExtractionRun(
+            document_version_id=str(uuid4()),
+            idempotency_key="selected-catalog-run-" + uuid4().hex,
+            schema_version="requirements-v2",
+            prompt_version="fixture",
+            model_config={},
+            state="completed",
+            review_state="not_required",
+        )
+        db.add(run)
+        db.flush()
+        for ordinal, requirement in enumerate(snapshot.requirements):
+            payload = requirement.requirement.model_dump(mode="json")
+            if payload["category"] == "payload":
+                payload["attribute"] = "payload_capacity"
+            if payload["category"] == "platform":
+                payload["attribute"] = "platform_type"
+                payload["operator"] = "text"
+            db.add(
+                RequirementRecord(
+                    run_id=run.id,
+                    ordinal=ordinal,
+                    payload=payload,
+                )
+            )
+        db.commit()
+        run_id = run.id
+
+    selected = client.post(
+        f"/v1/catalog/retrieve-from-run/{run_id}",
+        params={"catalog_version": "synthetic-c05-v1"},
+    )
+    assert selected.status_code == 200, selected.text
+    body = selected.json()
+    assert body["catalog_version"] == "synthetic-c05-v1"
+    assert body["candidates"]
+    assert all(row["item"]["sku"].startswith("S5-") for row in body["candidates"])
+    platform = next(row for row in body["candidates"] if row["item"]["sku"] == "S5-FRAME")
+    assert platform["eligible"] is True
+    assert platform["structured_match_score"] == 1.0
+    assert all("matched" in reason for reason in platform["breakdown"])
+
+    other = client.post(
+        f"/v1/catalog/retrieve-from-run/{run_id}",
+        params={"catalog_version": "demo-2026-09"},
+    ).json()
+    assert other["catalog_version"] == "demo-2026-09"
+    assert {row["item"]["sku"] for row in other["candidates"]}.isdisjoint(
+        {row["item"]["sku"] for row in body["candidates"]}
+    )

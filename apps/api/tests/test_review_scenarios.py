@@ -171,6 +171,41 @@ def test_versioned_scenarios_replay_without_rewriting_tender_facts(client, inges
         assert db.scalar(select(func.count()).select_from(ScenarioAssumption)) == 2
 
 
+def test_assumption_units_come_from_normalizer_and_mismatch_is_rejected(client, ingested):
+    units = client.get("/v1/scenarios/assumption-units")
+    assert units.status_code == 200
+    assert units.json()["units"]["range"][0] == "km"
+    assert units.json()["units"]["endurance"][0] == "min"
+    assert units.json()["units"]["payload"][0] == "kg"
+
+    run = _complete_run(client, ingested)
+    imported = client.post("/v1/catalog/import", json=SEED).json()
+    invalid = client.post(
+        "/v1/scenarios",
+        json={
+            "extraction_run_id": run,
+            "catalog_version_id": imported["catalog_version_id"],
+            "analysis_date": "2026-09-27",
+            "name": "Invalid unit estimate",
+            "intent": "baseline",
+            "rationale": "Exercise backend unit authority.",
+            "assumptions": [
+                {
+                    "category": "endurance",
+                    "attribute": "endurance",
+                    "operator": "minimum",
+                    "value": 30,
+                    "unit": "km",
+                    "rationale": "Deliberately invalid test input.",
+                    "provenance": "internal_assumption",
+                }
+            ],
+        },
+    )
+    assert invalid.status_code == 409
+    assert "not compatible" in invalid.json()["detail"]
+
+
 def test_scenario_catalog_choice_is_immutable_and_limits_solver_category(client, ingested):
     run = _complete_run(client, ingested)
     imported = client.post("/v1/catalog/import", json=SEED).json()

@@ -192,6 +192,7 @@ export type CatalogCandidate = {
   }[];
 };
 export type CandidateResponse = {
+  catalog_version: string | null;
   candidates: CatalogCandidate[];
   missing_requirements: string[];
   missing_critical_categories?: string[];
@@ -251,6 +252,7 @@ export type InventoryRecord = {
 };
 export type Analysis = {
   id: string;
+  catalog_version_id?: string;
   state: string;
   status?: string;
   outcome?: string;
@@ -334,10 +336,11 @@ export const api = {
     request<Configuration>(
       `/v1/analyses/${analysis}/configurations/${configuration}`,
     ),
-  retrieveCandidates: (run: string) =>
-    request<CandidateResponse>(`/v1/catalog/retrieve-from-run/${run}`, {
-      method: "POST",
-    }),
+  retrieveCandidates: (run: string, catalogVersion: string) =>
+    request<CandidateResponse>(
+      `/v1/catalog/retrieve-from-run/${run}?catalog_version=${encodeURIComponent(catalogVersion)}`,
+      { method: "POST" },
+    ),
   currentCatalog: () =>
     request<CurrentCatalogVersion>("/v1/catalog/versions/current"),
   catalogVersions: () =>
@@ -390,5 +393,9 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     }),
+  assumptionUnits: () =>
+    request<{ units: Record<string, string[]> }>(
+      "/v1/scenarios/assumption-units",
+    ),
   scenario: (id: string) => request<Scenario>(`/v1/scenarios/${id}`),
 };

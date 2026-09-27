@@ -345,6 +345,23 @@ def test_rated_mtow_requirement_is_not_confused_with_actual_mass():
     assert solve(snapshot).status == "feasible"
 
 
+def test_validated_c03_platform_and_payload_aliases_match_canonical_solver_contract():
+    snapshot = example_snapshot()
+    platform = snapshot.requirements[0].requirement
+    platform.attribute = "platform_type"
+    platform.operator = "text"
+    payload = snapshot.requirements[3].requirement
+    payload.attribute = "payload_capacity"
+
+    result = solve(snapshot)
+
+    assert result.status == "feasible"
+    recommended = next(value for value in result.configurations if value.recommended)
+    evaluations = {value.requirement.category: value for value in recommended.evaluations}
+    assert evaluations["platform"].result == "satisfied"
+    assert evaluations["payload"].result == "exceeded"
+
+
 def test_changed_policy_snapshot_identity_and_replay():
     snapshot = example_snapshot()
     original = fingerprint(snapshot.model_dump(mode="json"))

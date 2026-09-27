@@ -42,6 +42,10 @@ class ScenarioCreate(Contract):
     policy: SolverPolicy = Field(default_factory=SolverPolicy)
 
 
+class AssumptionUnitsResponse(Contract):
+    units: dict[str, list[str]]
+
+
 class ScenarioAssumptionResponse(Contract):
     id: str
     category: str

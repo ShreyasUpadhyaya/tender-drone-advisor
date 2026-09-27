@@ -9,8 +9,9 @@ from app.analysis.models import AnalysisRun
 from app.audit import record_audit
 from app.catalog.api import fail
 from app.db import get_db
+from app.extraction.validation import DIMENSIONS, UNITS
 from app.routes.documents import get_queue
-from app.scenarios.schemas import ScenarioCreate, ScenarioResponse
+from app.scenarios.schemas import AssumptionUnitsResponse, ScenarioCreate, ScenarioResponse
 from app.scenarios.service import _serialize, create_scenario, get_scenario
 from app.security import Actor, Role, require_authenticated, require_roles
 
@@ -37,8 +38,23 @@ def start_scenario(
     try:
         version, repeated = create_scenario(db, payload, actor)
     except ValueError as exc:
+        code = str(exc)
+        details = {
+            "scenario_inventory_not_in_catalog_snapshot": (
+                "This inventory item belongs to a different catalog snapshot. Select inventory "
+                "recorded for the active scenario catalog or change the scenario catalog."
+            ),
+            "unit_dimension_mismatch": (
+                "The assumption unit is not compatible with its requirement category."
+            ),
+            "unsupported_unit": "The assumption unit is not supported.",
+        }
         raise fail(
-            str(exc), "The scenario inputs need a completed tender extraction and valid units.", 409
+            code,
+            details.get(
+                code, "The scenario inputs need a completed tender extraction and valid units."
+            ),
+            409,
         ) from None
     if repeated:
         response.status_code = 200
@@ -73,6 +89,20 @@ def start_scenario(
                 503,
             ) from None
     return _serialize(db, version)
+
+
+@router.get("/assumption-units", response_model=AssumptionUnitsResponse)
+def assumption_units() -> AssumptionUnitsResponse:
+    preferred = {"range": "km", "endurance": "min", "payload": "kg", "quantity": "count"}
+    result: dict[str, list[str]] = {}
+    for category, preferred_unit in preferred.items():
+        canonical = DIMENSIONS[category]
+        supported = sorted(unit for unit, value in UNITS.items() if value[0] in canonical)
+        result[category] = [
+            preferred_unit,
+            *[u for u in supported if u != preferred_unit],
+        ]
+    return AssumptionUnitsResponse(units=result)
 
 
 @router.get("/{scenario_version_id}", response_model=ScenarioResponse)

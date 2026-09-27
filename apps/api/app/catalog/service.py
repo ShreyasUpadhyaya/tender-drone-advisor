@@ -36,27 +36,70 @@ def item_response(item: CatalogItem, version: CatalogVersion) -> CatalogItemResp
     )
 
 
-def match(item: CatalogItem, req: CandidateRequirement) -> tuple[bool, str]:
-    actual: Any = (item.specs or {}).get(req.attribute)
+CONFIGURATION_LEVEL_REQUIREMENTS = {
+    "platform",
+    "platform_type",
+    "range",
+    "range_m",
+    "endurance",
+    "endurance_s",
+    "payload",
+    "payload_capacity",
+    "payload_kg",
+}
+
+
+def _actual_value(item: CatalogItem, req: CandidateRequirement) -> Any:
+    specs = item.specs or {}
+    actual: Any = specs.get(req.attribute)
     if actual is None and req.attribute in {"weight", "weight_grams"}:
         actual = item.weight_kg
+    if item.category in {"platform", "airframe"}:
+        envelope = specs.get("envelope") or {}
+        assembly = specs.get("assembly") or {}
+        if req.attribute in {"platform", "platform_type"}:
+            actual = assembly.get("platform_type")
+        elif req.attribute in {"range", "range_m"}:
+            actual = envelope.get("range_m")
+        elif req.attribute in {"endurance", "endurance_s"}:
+            actual = envelope.get("endurance_s")
+        elif req.attribute in {"payload", "payload_capacity", "payload_kg"}:
+            actual = specs.get("payload_kg")
+            if actual is None and envelope.get("max_payload_g") is not None:
+                actual = envelope["max_payload_g"] / 1000
+    return actual
+
+
+def match(item: CatalogItem, req: CandidateRequirement) -> tuple[bool, str, bool]:
+    actual = _actual_value(item, req)
     if actual is None:
-        return (req.semantics != "mandatory", f"missing {req.attribute}")
+        if (
+            req.category in {"platform", "range", "endurance", "payload"}
+            or req.attribute in CONFIGURATION_LEVEL_REQUIREMENTS
+        ) and item.category not in {"platform", "airframe"}:
+            return True, "evaluated at configuration level; not applicable to this component", False
+        return req.semantics != "mandatory", f"missing {req.attribute}", True
     try:
         if req.operator == "minimum" and actual < req.normalized_value:
-            return False, f"{actual} below minimum {req.normalized_value}"
+            return False, f"{actual} below minimum {req.normalized_value}", True
         if req.operator == "maximum" and actual > req.normalized_value:
-            return False, f"{actual} above maximum {req.normalized_value}"
+            return False, f"{actual} above maximum {req.normalized_value}", True
         if req.operator == "exact" and actual != req.normalized_value:
-            return False, f"{actual} differs from {req.normalized_value}"
+            return False, f"{actual} differs from {req.normalized_value}", True
         if (
             req.operator == "enum"
             and str(actual).casefold() != str(req.normalized_value).casefold()
         ):
-            return False, f"{actual} differs from {req.normalized_value}"
-        return True, "matched"
+            return False, f"{actual} differs from {req.normalized_value}", True
+        if (
+            req.operator == "text"
+            and req.attribute in {"platform", "platform_type"}
+            and str(actual).casefold() != str(req.normalized_value).casefold()
+        ):
+            return False, f"{actual} differs from {req.normalized_value}", True
+        return True, "matched", True
     except (TypeError, ValueError):
-        return (req.semantics != "mandatory", f"type mismatch for {req.attribute}")
+        return req.semantics != "mandatory", f"type mismatch for {req.attribute}", True
 
 
 def retrieve_candidates(db: Session, request: RetrievalRequest) -> dict[str, Any]:
@@ -95,19 +138,21 @@ def retrieve_candidates(db: Session, request: RetrievalRequest) -> dict[str, Any
     context_ids = {item.id for item in context_items}
     results = []
     for item in db.scalars(stmt.order_by(CatalogItem.sku, CatalogItem.item_version)).all():
-        breakdown, matched, eligible, penalties = [], 0, True, []
+        breakdown, matched, applicable, eligible, penalties = [], 0, 0, True, []
         for req in request.requirements:
-            ok, why = match(item, req)
+            ok, why, applies = match(item, req)
             evidence = ",".join(req.evidence_ids) if req.evidence_ids else "none"
             breakdown.append(
                 f"{req.requirement_id or 'request'}/{evidence} {req.category}.{req.attribute}: {why}"
             )
-            if ok:
+            if applies:
+                applicable += 1
+            if ok and applies:
                 matched += 1
-            elif req.semantics == "mandatory":
+            elif applies and req.semantics == "mandatory":
                 eligible = False
-            if req.operator == "minimum":
-                actual = (item.specs or {}).get(req.attribute)
+            if applies and req.operator == "minimum":
+                actual = _actual_value(item, req)
                 if (
                     isinstance(actual, (int, float))
                     and isinstance(req.normalized_value, (int, float))
@@ -135,7 +180,7 @@ def retrieve_candidates(db: Session, request: RetrievalRequest) -> dict[str, Any
             for rule in incompatible:
                 eligible = False
                 breakdown.append(f"compatibility: incompatible; {rule.reason}")
-        score = matched / max(1, len(request.requirements))
+        score = matched / max(1, applicable)
         results.append(
             {
                 "item": item_response(item, version),
@@ -159,7 +204,11 @@ def retrieve_candidates(db: Session, request: RetrievalRequest) -> dict[str, Any
 
 
 def retrieve_from_run(
-    db: Session, run_id: str, category: str | None = None, limit: int = 20
+    db: Session,
+    run_id: str,
+    category: str | None = None,
+    limit: int = 20,
+    catalog_version: str | None = None,
 ) -> dict[str, Any]:
     run = db.get(ExtractionRun, run_id)
     if run is None:
@@ -186,7 +235,13 @@ def retrieve_from_run(
             )
         )
     result = retrieve_candidates(
-        db, RetrievalRequest(requirements=requirements, category=category, limit=limit)
+        db,
+        RetrievalRequest(
+            catalog_version=catalog_version,
+            requirements=requirements,
+            category=category,
+            limit=limit,
+        ),
     )
     result["missing_critical_categories"] = sorted(
         {"platform", "range", "endurance", "payload"} - {r.category for r in requirements}

@@ -141,6 +141,9 @@ export default function HomePage() {
   const [session, setSession] = useState<Session>();
   const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([]);
   const [inventory, setInventory] = useState<InventoryRecord[]>([]);
+  const [assumptionUnits, setAssumptionUnits] = useState<
+    Record<string, string[]>
+  >({});
   const [ragNodes, setRagNodes] = useState<Record<string, unknown>[]>([]);
   const [ragCitations, setRagCitations] = useState<Record<string, unknown>[]>(
     [],
@@ -155,13 +158,14 @@ export default function HomePage() {
   const polling = useRef<ReturnType<typeof setTimeout> | null>(null);
   const update = (patch: Partial<Workspace>) =>
     setWorkspace((state) => ({ ...state, ...patch }));
+  const extractionNeedsReview = requiresReview(
+    workspace.extraction?.state,
+    workspace.extraction?.review_state,
+  );
   const critical =
-    requiresReview(
-      workspace.extraction?.state,
-      workspace.extraction?.review_state,
-    ) || workspace.analysis?.status === "needs_review";
+    extractionNeedsReview || workspace.analysis?.status === "needs_review";
   const extractedReady =
-    workspace.extraction?.state === "completed" && !critical;
+    workspace.extraction?.state === "completed" && !extractionNeedsReview;
 
   useEffect(
     () => () => {
@@ -188,10 +192,15 @@ export default function HomePage() {
   }
   useEffect(() => {
     void loadCatalogVersions();
-    void Promise.all([api.session(), api.inventoryRecords()])
-      .then(([identity, records]) => {
+    void Promise.all([
+      api.session(),
+      api.inventoryRecords(),
+      api.assumptionUnits(),
+    ])
+      .then(([identity, records, unitResponse]) => {
         setSession(identity);
         setInventory(records);
+        setAssumptionUnits(unitResponse.units);
       })
       .catch(() => undefined);
   }, []);
@@ -199,11 +208,27 @@ export default function HomePage() {
     catalogVersions.find((entry) => entry.id === selectedCatalogId) ?? catalog;
   useEffect(() => {
     if (!selectedCatalog) return;
+    setCatalogItems([]);
     void api
       .catalogItems(selectedCatalog.version)
       .then(setCatalogItems)
       .catch(() => setCatalogItems([]));
   }, [selectedCatalog]);
+  function changeCatalog(nextCatalogId: string) {
+    if (nextCatalogId === selectedCatalogId) return;
+    if (polling.current) clearTimeout(polling.current);
+    setSelectedCatalogId(nextCatalogId);
+    setCandidateResult(undefined);
+    setScenarios([]);
+    setSelected(undefined);
+    setRagNodes([]);
+    setRagCitations([]);
+    update({
+      analysis: undefined,
+      configurations: [],
+      report: undefined,
+    });
+  }
   const poll = (fetcher: () => Promise<boolean>, attempt = 0) => {
     if (attempt > 10) return;
     polling.current = setTimeout(
@@ -296,12 +321,15 @@ export default function HomePage() {
     }
   }
   async function retrieveCandidates() {
-    if (!workspace.extraction || busy) return;
+    if (!workspace.extraction || !selectedCatalog || busy) return;
     setBusy(true);
     setError(undefined);
     try {
       setCandidateResult(
-        await api.retrieveCandidates(workspace.extraction.trace_id),
+        await api.retrieveCandidates(
+          workspace.extraction.trace_id,
+          selectedCatalog.version,
+        ),
       );
     } catch (caught) {
       setError(message(caught));
@@ -525,6 +553,8 @@ export default function HomePage() {
           extraction={workspace.extraction}
           catalog={selectedCatalog}
           inventory={inventory}
+          catalogItems={catalogItems}
+          assumptionUnits={assumptionUnits}
           scenarios={scenarios}
           onCreated={(scenario) =>
             setScenarios((current) => [
@@ -576,7 +606,7 @@ export default function HomePage() {
               aria-label="Catalog snapshot"
               name="catalogVersion"
               value={selectedCatalog?.id ?? ""}
-              onChange={(event) => setSelectedCatalogId(event.target.value)}
+              onChange={(event) => changeCatalog(event.target.value)}
               disabled={!selectedCatalog || busy}
             >
               {!selectedCatalog && (
@@ -622,6 +652,12 @@ export default function HomePage() {
             details={`${workspace.analysis.summary?.configuration_count ?? 0} option${workspace.analysis.summary?.configuration_count === 1 ? "" : "s"} evaluated · ${humanLabel(workspace.analysis.outcome ?? "pending")}`}
           />
         )}
+        {!workspace.analysis && workspace.extraction && selectedCatalog ? (
+          <EmptyState
+            title="No analysis has been run for this catalog"
+            detail={`Analyze the accepted requirements against ${humanLabel(selectedCatalog.version)}; no re-extraction is required.`}
+          />
+        ) : null}
         <TechnicalDetails>
           <p>
             Catalog snapshot and analysis identifiers are retained with the
@@ -656,7 +692,16 @@ export default function HomePage() {
           Generate grounded report
         </button>
         {workspace.report ? (
-          <Report report={workspace.report} onCitation={setCitation} />
+          <Report
+            report={workspace.report}
+            extraction={workspace.extraction}
+            configurations={workspace.configurations}
+            selected={selected}
+            requirements={requirements}
+            issues={issues}
+            scenarios={scenarios}
+            onCitation={setCitation}
+          />
         ) : (
           <EmptyState
             title="No report yet"
@@ -667,6 +712,7 @@ export default function HomePage() {
       <TechnicalAudit
         nodes={ragNodes}
         citations={ragCitations}
+        report={workspace.report}
         onCitation={setCitation}
       />
       <section className="card section-card export-card">
@@ -1846,6 +1892,8 @@ function Scenarios({
   extraction,
   catalog,
   inventory,
+  catalogItems,
+  assumptionUnits,
   scenarios,
   onCreated,
   onOpenAnalysis,
@@ -1854,6 +1902,8 @@ function Scenarios({
   extraction: ExtractionRun;
   catalog: CurrentCatalogVersion;
   inventory: InventoryRecord[];
+  catalogItems: CatalogItem[];
+  assumptionUnits: Record<string, string[]>;
   scenarios: Scenario[];
   onCreated: (scenario: Scenario) => void;
   onOpenAnalysis: (analysis: Analysis) => void | Promise<void>;
@@ -1879,6 +1929,25 @@ function Scenarios({
     }[]
   >([]);
   const [busy, setBusy] = useState(false);
+  const [assumptionError, setAssumptionError] = useState<string>();
+  const activeCatalogItemIds = useMemo(
+    () => new Set(catalogItems.map((item) => item.id)),
+    [catalogItems],
+  );
+  const compatibleInventory = (record: InventoryRecord) =>
+    Boolean(
+      record.solver_eligible &&
+        record.catalog_item_id &&
+        activeCatalogItemIds.has(record.catalog_item_id),
+    );
+  useEffect(() => {
+    setInventoryIds((current) =>
+      current.filter((id) => {
+        const record = inventory.find((item) => item.id === id);
+        return record ? compatibleInventory(record) : false;
+      }),
+    );
+  }, [catalog.id, catalogItems, inventory]);
   const create = async (event: FormEvent) => {
     event.preventDefault();
     if (busy) return;
@@ -1943,6 +2012,7 @@ function Scenarios({
     }
   };
   const addAssumption = () => {
+    const supportedUnits = assumptionUnits[category] ?? [];
     if (
       !value.trim() ||
       !Number.isFinite(Number(value)) ||
@@ -1954,6 +2024,13 @@ function Scenarios({
       );
       return;
     }
+    if (!supportedUnits.includes(unit)) {
+      setAssumptionError(
+        `${humanLabel(unit || "unknown")} is not a supported unit for ${humanLabel(category)}. Select ${supportedUnits.map(humanLabel).join(" or ")}.`,
+      );
+      return;
+    }
+    setAssumptionError(undefined);
     setAssumptionDrafts((current) => [
       ...current.filter((item) => item.attribute !== attribute),
       {
@@ -2014,8 +2091,11 @@ function Scenarios({
           <select
             value={category}
             onChange={(event) => {
-              setCategory(event.target.value);
-              setAttribute(event.target.value);
+              const nextCategory = event.target.value;
+              setCategory(nextCategory);
+              setAttribute(nextCategory);
+              setUnit(assumptionUnits[nextCategory]?.[0] ?? "");
+              setAssumptionError(undefined);
             }}
           >
             <option value="range">Range</option>
@@ -2042,12 +2122,23 @@ function Scenarios({
         </button>
         <label>
           Unit
-          <input
+          <select
             value={unit}
             onChange={(event) => setUnit(event.target.value)}
-            placeholder="km, min, kg or count"
-          />
+            aria-invalid={Boolean(assumptionError)}
+          >
+            {(assumptionUnits[category] ?? []).map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
         </label>
+        {assumptionError ? (
+          <span className="field-error" role="alert">
+            {assumptionError}
+          </span>
+        ) : null}
         <label>
           Catalog SKU constraint (optional)
           <input
@@ -2072,7 +2163,7 @@ function Scenarios({
                 <input
                   type="checkbox"
                   checked={inventoryIds.includes(record.id)}
-                  disabled={!record.solver_eligible}
+                  disabled={!compatibleInventory(record)}
                   onChange={(event) =>
                     setInventoryIds((current) =>
                       event.target.checked
@@ -2082,7 +2173,11 @@ function Scenarios({
                   }
                 />
                 {record.name}: {record.current.on_hand_quantity} on hand
-                {record.solver_eligible ? "" : " — pending catalog validation"}
+                {!record.solver_eligible
+                  ? " — pending catalog validation"
+                  : compatibleInventory(record)
+                    ? ""
+                    : ` — unavailable for ${humanLabel(catalog.version)}; recorded under a different catalog snapshot`}
               </label>
             ))
           ) : (
@@ -2242,6 +2337,10 @@ function Candidates({
         <span>
           {result.candidates.length} candidate
           {result.candidates.length === 1 ? "" : "s"} evaluated
+        </span>
+        <span>
+          Catalog snapshot:{" "}
+          {humanLabel(result.catalog_version ?? "not available")}
         </span>
         {result.missing_requirements.length ? (
           <span>
@@ -2614,52 +2713,44 @@ function platformName(configuration: Configuration) {
 }
 function Report({
   report,
+  extraction,
+  configurations,
+  selected,
+  requirements,
+  issues,
+  scenarios,
   onCitation,
 }: {
   report: Record<string, unknown>;
+  extraction?: ExtractionRun;
+  configurations: Configuration[];
+  selected?: Configuration;
+  requirements: Requirement[];
+  issues: Issue[];
+  scenarios: Scenario[];
   onCitation: (value: Evidence | Record<string, unknown>) => void;
 }) {
-  const sections = (report.sections ?? []) as {
-    title: string;
-    facts: { id: string; text: string; citation: Evidence }[];
-  }[];
-  const readableFact = (text: string) => {
-    const structured =
-      text.trim().startsWith("{") || text.trim().startsWith("[");
-    if (structured) {
-      return "Structured catalog or configuration fact is available in the cited evidence.";
-    }
-    try {
-      const value = JSON.parse(text) as Record<string, unknown>;
-      if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        return text;
-      }
-      const name = typeof value.name === "string" ? value.name : undefined;
-      const sku = typeof value.sku === "string" ? value.sku : undefined;
-      const category =
-        typeof value.category === "string"
-          ? humanLabel(value.category)
-          : undefined;
-      const availability =
-        typeof value.availability === "string"
-          ? humanLabel(value.availability)
-          : undefined;
-      const weight =
-        typeof value.weight_g === "number" ? `${value.weight_g} g` : undefined;
-      const status =
-        typeof value.status === "string" ? humanLabel(value.status) : undefined;
-      const label = name ?? sku ?? category ?? status;
-      const details = [category, availability, weight, status].filter(
-        (entry, index, values) =>
-          entry && values.indexOf(entry) === index && entry !== label,
-      );
-      return label
-        ? [label, ...details].join(" · ")
-        : "Structured catalog or configuration fact is available in the cited evidence.";
-    } catch {
-      return text;
-    }
-  };
+  const configuration =
+    selected ??
+    configurations.find((item) =>
+      item.labels.includes("balanced_recommended"),
+    ) ??
+    configurations.find((item) => item.status === "feasible") ??
+    configurations[0];
+  const tenderVerified =
+    extraction?.state === "completed" &&
+    extraction.review_state === "not_required";
+  const satisfied =
+    configuration?.evaluations.filter((item) =>
+      ["satisfied", "exceeded"].includes(item.result),
+    ) ?? [];
+  const unresolved =
+    configuration?.evaluations.filter(
+      (item) =>
+        !["satisfied", "exceeded", "not_applicable"].includes(item.result),
+    ) ?? [];
+  const assumptions = scenarios.flatMap((scenario) => scenario.assumptions);
+  const questions = (report.clarification_questions ?? []) as string[];
   return (
     <div className="report">
       <Alert>
@@ -2670,29 +2761,158 @@ function Report({
         </strong>{" "}
         · Solver status: {humanLabel(String(report.solver_status ?? "pending"))}
       </Alert>
-      {sections.map((section) => (
-        <article className="report-section" key={section.title}>
-          <h3>{section.title}</h3>
-          {section.facts.map((fact) => (
-            <p key={fact.id}>
-              {readableFact(fact.text)}{" "}
-              <button
-                className="link-button"
-                onClick={() => onCitation(fact.citation)}
-              >
-                View source
-              </button>
-            </p>
-          ))}
+      <article className="report-section">
+        <h3>Decision summary</h3>
+        <dl className="cost">
+          <div>
+            <dt>Configuration</dt>
+            <dd>
+              {configuration
+                ? platformName(configuration)
+                : "No valid configuration"}
+            </dd>
+          </div>
+          <div>
+            <dt>Engineering feasibility</dt>
+            <dd>
+              {humanLabel(
+                configuration?.status ??
+                  String(report.solver_status ?? "pending"),
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt>Tender verification</dt>
+            <dd>
+              {tenderVerified
+                ? "Verified from cited requirements"
+                : "Unresolved — review required"}
+            </dd>
+          </div>
+          <div>
+            <dt>Material cost</dt>
+            <dd>{formatInr(configuration?.cost.material_paise)}</dd>
+          </div>
+          <div>
+            <dt>Contingency</dt>
+            <dd>{formatInr(configuration?.cost.contingency_paise)}</dd>
+          </div>
+          <div>
+            <dt>Final estimated cost</dt>
+            <dd>{formatInr(configuration?.cost.total_paise)}</dd>
+          </div>
+          <div>
+            <dt>Total weight</dt>
+            <dd>
+              {configuration
+                ? `${configuration.total_weight_g} g`
+                : "Not available"}
+            </dd>
+          </div>
+          <div>
+            <dt>Payload capability</dt>
+            <dd>
+              {configuration ? `${configuration.payload_g} g` : "Not available"}
+            </dd>
+          </div>
+          <div>
+            <dt>Lead time</dt>
+            <dd>
+              {configuration
+                ? `${configuration.lead_time_days} days`
+                : "Not available"}
+            </dd>
+          </div>
+        </dl>
+      </article>
+      <article className="report-section">
+        <h3>Requirement coverage</h3>
+        <p>
+          {satisfied.length} solver-evaluated requirement
+          {satisfied.length === 1 ? "" : "s"} satisfied or exceeded.
+          {unresolved.length || issues.length
+            ? ` ${Math.max(unresolved.length, issues.length)} requirement or review item remains unresolved.`
+            : " No unresolved solver requirement remains."}
+        </p>
+        {satisfied.length ? (
+          <ul className="report-list">
+            {satisfied.map((evaluation) => (
+              <li key={evaluation.requirement_id}>
+                <strong>{humanLabel(evaluation.requirement.attribute)}</strong>:{" "}
+                {safeReason(evaluation.explanation)}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </article>
+      {configuration ? (
+        <article className="report-section">
+          <h3>Selected components</h3>
+          <ul className="report-list">
+            {configuration.selections.map((selection) => (
+              <li key={`${selection.item.sku}-${selection.quantity}`}>
+                {selection.item.name} · {selection.item.sku} ×{" "}
+                {selection.quantity}
+              </li>
+            ))}
+          </ul>
         </article>
-      ))}
+      ) : null}
+      <article className="report-section">
+        <h3>Important tender evidence</h3>
+        <ul className="report-list">
+          {requirements.map(({ id, requirement }) => (
+            <li key={id}>
+              <strong>{humanLabel(requirement.attribute)}</strong>:{" "}
+              {formatRequirementValue(
+                requirement.original_value,
+                requirement.original_unit,
+              )}{" "}
+              {requirement.validated_evidence[0] ? (
+                <button
+                  className="link-button"
+                  onClick={() => onCitation(requirement.validated_evidence[0])}
+                >
+                  View source
+                </button>
+              ) : (
+                <span className="assumption-evidence">
+                  Evidence unavailable
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      </article>
+      {assumptions.length ? (
+        <article className="report-section">
+          <h3>Internal assumptions</h3>
+          <ul className="report-list">
+            {assumptions.map((item) => (
+              <li key={item.id}>
+                {humanLabel(item.attribute)}:{" "}
+                {formatRequirementValue(
+                  item.original_value,
+                  item.original_unit,
+                )}{" "}
+                — not tender evidence
+              </li>
+            ))}
+          </ul>
+        </article>
+      ) : null}
+      <article className="report-section">
+        <h3>Warnings and compliance caveats</h3>
+        <p>
+          This is decision support, not tender compliance, bid approval,
+          engineering certification or flight certification.
+        </p>
+      </article>
       <h3>Clarification questions</h3>
       <ul>
-        {((report.clarification_questions ?? []) as string[]).map(
-          (question) => (
-            <li key={question}>{question}</li>
-          ),
-        )}
+        {questions.map((question) => (
+          <li key={question}>{question}</li>
+        ))}
       </ul>
     </div>
   );
@@ -2700,10 +2920,12 @@ function Report({
 function TechnicalAudit({
   nodes,
   citations,
+  report,
   onCitation,
 }: {
   nodes: Record<string, unknown>[];
   citations: Record<string, unknown>[];
+  report?: Record<string, unknown>;
   onCitation: (value: Evidence | Record<string, unknown>) => void;
 }) {
   return (
@@ -2747,6 +2969,24 @@ function TechnicalAudit({
                 Open cited evidence {index + 1}
               </button>
             ))}
+          </div>
+        ) : null}
+        {report ? (
+          <div className="technical-report-metadata">
+            <h3>Technical report metadata</h3>
+            <ul>
+              {(
+                (report.sections ?? []) as {
+                  title: string;
+                  facts: unknown[];
+                }[]
+              ).map((section) => (
+                <li key={section.title}>
+                  {humanLabel(section.title)} · {section.facts.length} grounded
+                  fact{section.facts.length === 1 ? "" : "s"}
+                </li>
+              ))}
+            </ul>
           </div>
         ) : null}
       </details>
@@ -2796,13 +3036,17 @@ function CitationDrawer({
   );
 }
 function message(error: unknown) {
-  return error instanceof ApiError
-    ? error.status === 422
+  if (error instanceof ApiError) {
+    if (error.detail.includes("different catalog snapshot"))
+      return error.detail;
+    if (error.detail.includes("unit is not compatible")) return error.detail;
+    return error.status === 422
       ? "Check the entered value and try again."
       : error.status === 503
         ? "The local worker is unavailable. Retry shortly."
-        : "The requested item is not available in this workflow state."
-    : "The request could not be completed. Retry when the local API and worker are available.";
+        : "The requested item is not available in this workflow state.";
+  }
+  return "The request could not be completed. Retry when the local API and worker are available.";
 }
 function downloadBrief(
   workspace: Workspace,
@@ -2892,7 +3136,9 @@ function downloadBrief(
     )
     .join("\n");
   const link = document.createElement("a");
-  link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  link.href = URL.createObjectURL(
+    new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }),
+  );
   link.download = "tender-decision-brief.csv";
   link.click();
   URL.revokeObjectURL(link.href);

@@ -8,7 +8,7 @@ MAPPINGS = {
     "platform": ({"platform", "platform_type"}, "platform_type", "none", 1),
     "range": ({"range", "range_m"}, "range_m", "m", 1),
     "endurance": ({"endurance", "endurance_s"}, "endurance_s", "s", 1),
-    "payload": ({"payload", "payload_kg"}, "payload_g", "kg", 1000),
+    "payload": ({"payload", "payload_capacity", "payload_kg"}, "payload_g", "kg", 1000),
     "mtow": ({"mtow", "mtow_kg"}, "mtow_g", "kg", 1000),
     "altitude": ({"altitude", "altitude_m"}, "altitude_m", "m", 1),
     "speed": ({"speed", "speed_m_s"}, "speed_mm_s", "m/s", 1000),
@@ -48,7 +48,11 @@ def evaluate(record: Requirement, capabilities: dict[str, Capability]) -> Evalua
             value, target, op = actual.value, req.normalized_value, req.operator
             match = None
             if op in ("enum", "text") and isinstance(target, str):
-                if op == "enum":
+                if op == "enum" or (
+                    op == "text"
+                    and req.category == "platform"
+                    and req.attribute in {"platform", "platform_type"}
+                ):
                     match = (
                         target.casefold() in [str(v).casefold() for v in value]
                         if isinstance(value, list)
