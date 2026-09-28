@@ -120,6 +120,12 @@ export type Evidence = {
   chunk_index?: number;
   quote?: string;
 };
+export type SourceSpan = Evidence & {
+  start_offset?: number;
+  end_offset?: number;
+  extraction_method?: string;
+  text?: string;
+};
 export type Cost = {
   material_paise: number | null;
   engineering_integration_paise: number;
@@ -164,7 +170,7 @@ export type Configuration = {
       validated_evidence: Evidence[];
     };
   }[];
-  issues: { detail: string }[];
+  issues: { code?: string; detail: string; severity?: string }[];
 };
 export type CatalogCandidate = {
   item: {
@@ -267,6 +273,33 @@ export class ApiError extends Error {
   }
 }
 const root = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+function errorDetail(body: unknown) {
+  if (!body || typeof body !== "object") return "Request failed";
+  const detail = (body as { detail?: unknown }).detail;
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const message = (detail as { detail?: unknown }).detail;
+    if (typeof message === "string") return message;
+  }
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") return undefined;
+        const value = entry as { loc?: unknown; msg?: unknown };
+        const field = Array.isArray(value.loc) ? value.loc.at(-1) : undefined;
+        return typeof value.msg === "string"
+          ? `${typeof field === "string" ? humanField(field) + ": " : ""}${value.msg}`
+          : undefined;
+      })
+      .filter((value): value is string => Boolean(value));
+    return messages.join(" ") || "Check the entered values and try again.";
+  }
+  return typeof detail === "string" ? detail : "Request failed";
+}
+function humanField(value: string) {
+  return value
+    .replace(/_/g, " ")
+    .replace(/^./, (letter) => letter.toUpperCase());
+}
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${root}${path}`, {
     ...init,
@@ -274,10 +307,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new ApiError(
-      response.status,
-      body.detail?.detail ?? body.detail ?? "Request failed",
-    );
+    throw new ApiError(response.status, errorDetail(body));
   }
   return response.json() as Promise<T>;
 }
@@ -291,6 +321,10 @@ export const api = {
     });
   },
   document: (id: string) => request<DocumentStatus>(`/v1/documents/${id}`),
+  sourceSpans: (documentId: string) =>
+    request<{ spans: SourceSpan[] }>(`/v1/documents/${documentId}/spans`),
+  sourceSpan: (documentId: string, spanId: string) =>
+    request<SourceSpan>(`/v1/documents/${documentId}/spans/${spanId}`),
   startExtraction: (version: string) =>
     request<ExtractionRun>(`/v1/document-versions/${version}/extractions`, {
       method: "POST",

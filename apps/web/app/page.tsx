@@ -26,6 +26,7 @@ import {
   type ReviewWorkspace,
   type Scenario,
   type Session,
+  type SourceSpan,
 } from "../lib/api";
 import {
   formatInr,
@@ -155,6 +156,10 @@ export default function HomePage() {
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [file, setFile] = useState<File>();
+  const [scenarioPrefill, setScenarioPrefill] = useState<{
+    category: string;
+    nonce: number;
+  }>();
   const polling = useRef<ReturnType<typeof setTimeout> | null>(null);
   const update = (patch: Partial<Workspace>) =>
     setWorkspace((state) => ({ ...state, ...patch }));
@@ -374,14 +379,43 @@ export default function HomePage() {
     }
   }
   async function openScenarioAnalysis(analysis: Analysis) {
-    update({ analysis });
-    if (!isTerminal(analysis.state)) return;
+    setError(undefined);
     try {
-      const configurations = await api.configurations(analysis.id);
-      update({ analysis, configurations: configurations.configurations });
+      const current = await api.analysis(analysis.id);
+      update({ analysis: current, configurations: [] });
+      if (isTerminal(current.state)) {
+        const configurations = await api.configurations(current.id);
+        update({
+          analysis: current,
+          configurations: configurations.configurations,
+        });
+      } else {
+        poll(async () => {
+          const next = await api.analysis(current.id);
+          update({ analysis: next });
+          if (isTerminal(next.state)) {
+            update({
+              configurations: (await api.configurations(next.id))
+                .configurations,
+            });
+          }
+          return isTerminal(next.state);
+        });
+      }
+      document.getElementById("analysis")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
     } catch (caught) {
       setError(message(caught));
     }
+  }
+  function startAssumption(category: string) {
+    setScenarioPrefill({ category, nonce: Date.now() });
+    document.getElementById("scenarios")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
   }
   async function startReport() {
     if (!workspace.analysis || busy) return;
@@ -519,6 +553,13 @@ export default function HomePage() {
           />
         )}
       </section>
+      <BuildabilityReadiness
+        review={reviewWorkspace}
+        candidates={candidateResult}
+        analysis={workspace.analysis}
+        configurations={workspace.configurations}
+        onMatch={() => void retrieveCandidates()}
+      />
       <Requirements
         requirements={requirements}
         issues={issues}
@@ -527,6 +568,8 @@ export default function HomePage() {
         onCitation={setCitation}
         onRetry={() => void retryExtraction()}
         onError={setError}
+        document={workspace.document}
+        onExploreAssumption={startAssumption}
         onReviewRecorded={() =>
           workspace.extraction &&
           void loadReviewWorkspace(workspace.extraction.trace_id)
@@ -564,6 +607,7 @@ export default function HomePage() {
           }
           onOpenAnalysis={openScenarioAnalysis}
           onError={setError}
+          prefill={scenarioPrefill}
         />
       )}
 
@@ -586,7 +630,11 @@ export default function HomePage() {
           }
           onClick={retrieveCandidates}
         >
-          {candidateResult ? "Refresh catalog matches" : "Match catalog"}
+          {candidateResult
+            ? "Refresh provisional catalog matches"
+            : critical
+              ? "Match catalog provisionally"
+              : "Match catalog"}
         </button>
         <Candidates result={candidateResult} blocked={critical} />
       </section>
@@ -874,19 +922,23 @@ function Requirements({
   issues,
   extraction,
   review,
+  document,
   onCitation,
   onRetry,
   onError,
   onReviewRecorded,
+  onExploreAssumption,
 }: {
   requirements: Requirement[];
   issues: Issue[];
   extraction?: ExtractionRun;
   review?: ReviewWorkspace;
+  document?: DocumentStatus;
   onCitation: (value: Evidence | Record<string, unknown>) => void;
   onRetry: () => void;
   onError: (message: string) => void;
   onReviewRecorded: () => void;
+  onExploreAssumption: (category: string) => void;
 }) {
   const [filter, setFilter] = useState("all");
   const filters = [
@@ -952,6 +1004,7 @@ function Requirements({
     issue?: Issue,
     requirement?: Requirement,
     evidence?: Evidence,
+    assumptionCategory?: string,
   ) => {
     if (!extraction || !rationale.trim()) return;
     if (evidenceDecision && !evidence) {
@@ -995,6 +1048,8 @@ function Requirements({
       setCorrectedValue("");
       setCorrectedUnit("");
       onReviewRecorded();
+      if (decision === "record_documented_assumption")
+        onExploreAssumption(assumptionCategory ?? "range");
     } finally {
       setSaving(false);
     }
@@ -1087,9 +1142,22 @@ function Requirements({
             a successful tender review.
           </span>
           <span>{review?.next_action}</span>
-          <a className="secondary-button" href="#scenarios">
-            Explore build scenarios
-          </a>
+          <div className="empty-state-actions">
+            {document ? (
+              <SourceSectionExplorer
+                documentId={document.document_id}
+                onCitation={onCitation}
+                onError={onError}
+              />
+            ) : null}
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => onExploreAssumption("range")}
+            >
+              Explore build scenarios
+            </button>
+          </div>
         </div>
       ) : requirements.length === 0 ? (
         <EmptyState
@@ -1224,6 +1292,16 @@ function Requirements({
                   no source excerpt to verify.
                 </span>
               )}
+              {group.assumptionCategory ? (
+                <button
+                  type="button"
+                  className="secondary-button estimate-action"
+                  onClick={() => onExploreAssumption(group.assumptionCategory!)}
+                >
+                  Set an internal{" "}
+                  {humanLabel(group.assumptionCategory).toLowerCase()} estimate
+                </button>
+              ) : null}
               {review?.events.find(
                 (event) =>
                   event.issue_id === group.issue.id && event.is_current,
@@ -1283,7 +1361,7 @@ function Requirements({
                           Reject unsupported extraction
                         </option>
                         <option value="record_documented_assumption">
-                          Record documented assumption
+                          Record an internal-assumption decision
                         </option>
                       </select>
                     </label>
@@ -1332,6 +1410,7 @@ function Requirements({
                           group.issue,
                           group.requirement,
                           group.evidence,
+                          group.assumptionCategory,
                         )
                       }
                     >
@@ -1400,6 +1479,197 @@ function Requirements({
     </section>
   );
 }
+function SourceSectionExplorer({
+  documentId,
+  onCitation,
+  onError,
+}: {
+  documentId: string;
+  onCitation: (value: Evidence | Record<string, unknown>) => void;
+  onError: (message: string) => void;
+}) {
+  const [spans, setSpans] = useState<SourceSpan[]>();
+  const [loading, setLoading] = useState(false);
+  const load = async () => {
+    setLoading(true);
+    try {
+      setSpans((await api.sourceSpans(documentId)).spans);
+    } catch (caught) {
+      onError(message(caught));
+    } finally {
+      setLoading(false);
+    }
+  };
+  const open = async (span: SourceSpan) => {
+    if (!span.span_id) return;
+    try {
+      const source = await api.sourceSpan(documentId, span.span_id);
+      onCitation({ ...source, quote: source.text });
+    } catch (caught) {
+      onError(message(caught));
+    }
+  };
+  return (
+    <details className="source-section-explorer">
+      <summary onClick={() => !spans && void load()}>
+        {loading
+          ? "Loading source sections…"
+          : "Inspect tender source sections"}
+      </summary>
+      {spans?.length ? (
+        <ul className="source-section-list">
+          {spans.map((span) => (
+            <li key={span.span_id}>
+              <span>
+                {span.page_number
+                  ? `Page ${span.page_number}`
+                  : "Page not recorded"}
+                {span.section_name ? ` · ${span.section_name}` : ""}
+              </span>
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => void open(span)}
+              >
+                View section
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : spans ? (
+        <span className="muted">
+          No readable source sections were retained for this document.
+        </span>
+      ) : null}
+    </details>
+  );
+}
+
+function BuildabilityReadiness({
+  review,
+  candidates,
+  analysis,
+  configurations,
+  onMatch,
+}: {
+  review?: ReviewWorkspace;
+  candidates?: CandidateResponse;
+  analysis?: Analysis;
+  configurations: Configuration[];
+  onMatch: () => void;
+}) {
+  if (!review) return null;
+  const blocking = review.issues.filter(
+    (issue) => issue.issue?.blocking !== false,
+  );
+  const accepted = review.counts.accepted;
+  const overEvidenceThreshold = blocking.length > 3;
+  const eligibleCandidates =
+    candidates?.candidates.filter((candidate) => candidate.eligible) ?? [];
+  const hasFinalCandidate = configurations.some((configuration) =>
+    ["feasible", "conditionally_feasible"].includes(configuration.status),
+  );
+
+  if (accepted === 0 || overEvidenceThreshold) {
+    return (
+      <section
+        className="card buildability-readiness"
+        aria-labelledby="buildability-title"
+      >
+        <p className="eyebrow">Buildability check</p>
+        <h2 id="buildability-title">We cannot recommend a build yet</h2>
+        <p>
+          {accepted === 0
+            ? "No tender requirement has passed citation validation."
+            : `${blocking.length} tender details need verification before the catalog can be evaluated safely.`}{" "}
+          Updating the catalog will not fix missing or unsupported tender
+          evidence.
+        </p>
+        <div className="readiness-actions">
+          <a className="secondary-button" href="#review">
+            Review tender evidence
+          </a>
+          <a className="secondary-button" href="#scenarios">
+            Explore an internal estimate
+          </a>
+        </div>
+        <small>
+          An internal estimate can compare catalog options, but it cannot make
+          the tender compliant or ready to bid.
+        </small>
+      </section>
+    );
+  }
+
+  if (!candidates) {
+    return (
+      <section
+        className="card buildability-readiness"
+        aria-labelledby="buildability-title"
+      >
+        <p className="eyebrow">Buildability check</p>
+        <h2 id="buildability-title">
+          Tender facts are ready for catalog matching
+        </h2>
+        <p>
+          Compare the verified requirements with the selected immutable catalog
+          snapshot before drawing a build conclusion.
+        </p>
+        <button type="button" className="secondary-button" onClick={onMatch}>
+          Match catalog
+        </button>
+      </section>
+    );
+  }
+
+  if (eligibleCandidates.length === 0 || analysis?.status === "infeasible") {
+    return (
+      <section
+        className="card buildability-readiness buildability-negative"
+        aria-labelledby="buildability-title"
+      >
+        <p className="eyebrow">Buildability check</p>
+        <h2 id="buildability-title">
+          We cannot build this from the selected catalog yet
+        </h2>
+        <p>
+          No available candidate currently satisfies the verified requirements
+          for this catalog snapshot. An administrator can add verified component
+          capability, price and availability data in Catalog Administration,
+          then refresh matching and re-run analysis.
+        </p>
+        <a
+          className="secondary-button"
+          href="http://localhost:8000/docs#/catalog"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Catalog Administration
+        </a>
+      </section>
+    );
+  }
+
+  if (hasFinalCandidate) {
+    return (
+      <section
+        className="card buildability-readiness buildability-positive"
+        aria-labelledby="buildability-title"
+      >
+        <p className="eyebrow">Buildability check</p>
+        <h2 id="buildability-title">
+          A catalog-backed configuration is available
+        </h2>
+        <p>
+          Review the deterministic BOM, pricing, engineering margins and tender
+          evidence before any engineering, commercial or bid approval.
+        </p>
+      </section>
+    );
+  }
+
+  return null;
+}
 function groupIssues(issues: Issue[], requirements: Requirement[]) {
   const groups = new Map<
     string,
@@ -1411,6 +1681,7 @@ function groupIssues(issues: Issue[], requirements: Requirement[]) {
       action: string;
       affected: string[];
       evidence?: Evidence;
+      assumptionCategory?: string;
       blocking: boolean;
       issue: Issue;
       requirement?: Requirement;
@@ -1422,10 +1693,12 @@ function groupIssues(issues: Issue[], requirements: Requirement[]) {
       issue.requirement_index == null
         ? undefined
         : requirements[issue.requirement_index];
+    const assumptionCategory =
+      requirement?.requirement.category ?? issueCategory(issue.detail);
     const title = issue.code
       ? humanLabel(issue.code)
       : "Tender detail needs clarification";
-    const key = `${issue.code ?? "review"}-${requirement?.requirement.category ?? "general"}`;
+    const key = `${issue.code ?? "review"}-${assumptionCategory ?? "general"}`;
     const current = groups.get(key) ?? {
       key,
       title,
@@ -1436,18 +1709,26 @@ function groupIssues(issues: Issue[], requirements: Requirement[]) {
       action: actionForIssue(issue.code, requirement),
       affected: [],
       evidence: requirement?.requirement.validated_evidence[0],
+      assumptionCategory,
       blocking: issue.blocking !== false,
       issue: record,
       requirement,
     };
     const label = requirement
       ? humanLabel(requirement.requirement.attribute)
-      : categoryFromDetail(issue.detail);
+      : assumptionCategory
+        ? humanLabel(assumptionCategory)
+        : categoryFromDetail(issue.detail);
     if (label && !current.affected.includes(label))
       current.affected.push(label);
     groups.set(key, current);
   }
   return [...groups.values()];
+}
+function issueCategory(detail?: string) {
+  return detail
+    ?.match(/range|endurance|payload|altitude|speed|quantity/i)?.[0]
+    ?.toLowerCase();
 }
 function humanizeIssueSummary(value: string) {
   const summary = safeReason(value)
@@ -1503,12 +1784,20 @@ function InventoryWorkspace({
   const [missingCategory, setMissingCategory] = useState("");
   const [busy, setBusy] = useState(false);
   const isAdmin = session?.roles.includes("admin") ?? false;
+  const expectsLater = Number(expected) > 0;
   const save = async (event: FormEvent) => {
     event.preventDefault();
     if (!isAdmin || busy) return;
-    if ((!unlisted && !itemId) || !location.trim() || !rationale.trim()) {
+    if (
+      (!unlisted && !itemId) ||
+      !location.trim() ||
+      !rationale.trim() ||
+      (expectsLater && !expectedOn)
+    ) {
       onError(
-        "Choose a catalog item and record the stock location and rationale.",
+        expectsLater && !expectedOn
+          ? "Select the expected arrival date before recording stock that is due later."
+          : "Choose a catalog item and record the stock location and rationale.",
       );
       return;
     }
@@ -1643,9 +1932,15 @@ function InventoryWorkspace({
               type="date"
               value={expectedOn}
               onChange={(event) => setExpectedOn(event.target.value)}
-              disabled={Number(expected) === 0}
-              required={Number(expected) > 0}
+              disabled={!expectsLater}
+              required={expectsLater}
             />
+            {expectsLater && !expectedOn ? (
+              <span className="field-error" role="alert">
+                Select the expected arrival date before recording stock that is
+                due later.
+              </span>
+            ) : null}
           </label>
           <label>
             Stock location
@@ -1796,28 +2091,34 @@ function InventoryRevision({
   );
   const [location, setLocation] = useState(record.current.location);
   const [rationale, setRationale] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [savedVersion, setSavedVersion] = useState<number>();
   const allowed =
     session?.roles.includes("admin") &&
     session.subject === record.owner_subject;
+  const expectsLater = Number(expected) > 0;
+  const validExpectedDate = !expectsLater || Boolean(expectedOn);
   const revise = async () => {
-    if (!allowed || !rationale.trim()) return;
+    if (!allowed || !rationale.trim() || !validExpectedDate || saving) return;
+    setSaving(true);
     try {
-      onChanged(
-        await api.reviseInventoryRecord(record.id, {
-          on_hand_quantity: Number(onHand),
-          expected_quantity: Number(expected),
-          expected_on:
-            Number(expected) > 0 ? expectedOn || undefined : undefined,
-          location,
-          rationale,
-          extraction_run_id: extraction?.trace_id,
-          requirement_ids: record.current.requirement_ids,
-          requirement_categories: record.current.requirement_categories,
-        }),
-      );
+      const updated = await api.reviseInventoryRecord(record.id, {
+        on_hand_quantity: Number(onHand),
+        expected_quantity: Number(expected),
+        expected_on: Number(expected) > 0 ? expectedOn || undefined : undefined,
+        location,
+        rationale,
+        extraction_run_id: extraction?.trace_id,
+        requirement_ids: record.current.requirement_ids,
+        requirement_categories: record.current.requirement_categories,
+      });
+      onChanged(updated);
+      setSavedVersion(updated.current.version_number);
       setRationale("");
     } catch (caught) {
       onError(message(caught));
+    } finally {
+      setSaving(false);
     }
   };
   return (
@@ -1853,9 +2154,16 @@ function InventoryRevision({
               type="date"
               value={expectedOn}
               onChange={(event) => setExpectedOn(event.target.value)}
-              disabled={Number(expected) === 0}
+              disabled={!expectsLater}
+              required={expectsLater}
             />
           </label>
+          {expectsLater && !expectedOn ? (
+            <span className="field-error" role="alert">
+              Select the expected arrival date before saving stock that is due
+              later.
+            </span>
+          ) : null}
           <label>
             Location
             <input
@@ -1872,11 +2180,19 @@ function InventoryRevision({
           </label>
           <button
             type="button"
-            disabled={!rationale.trim()}
+            disabled={!rationale.trim() || !validExpectedDate || saving}
             onClick={() => void revise()}
           >
-            Save new inventory version
+            {saving
+              ? "Saving inventory version…"
+              : "Save new inventory version"}
           </button>
+          {savedVersion ? (
+            <span className="save-confirmation" role="status">
+              Inventory version {savedVersion} saved. The catalog specification
+              was not changed.
+            </span>
+          ) : null}
         </div>
       ) : (
         <p className="muted">
@@ -1898,6 +2214,7 @@ function Scenarios({
   onCreated,
   onOpenAnalysis,
   onError,
+  prefill,
 }: {
   extraction: ExtractionRun;
   catalog: CurrentCatalogVersion;
@@ -1908,6 +2225,7 @@ function Scenarios({
   onCreated: (scenario: Scenario) => void;
   onOpenAnalysis: (analysis: Analysis) => void | Promise<void>;
   onError: (message: string) => void;
+  prefill?: { category: string; nonce: number };
 }) {
   const [intent, setIntent] = useState("baseline");
   const [category, setCategory] = useState("range");
@@ -1930,6 +2248,13 @@ function Scenarios({
   >([]);
   const [busy, setBusy] = useState(false);
   const [assumptionError, setAssumptionError] = useState<string>();
+  useEffect(() => {
+    if (!prefill) return;
+    setCategory(prefill.category);
+    setAttribute(prefill.category);
+    setUnit(assumptionUnits[prefill.category]?.[0] ?? "");
+    setAssumptionError(undefined);
+  }, [prefill, assumptionUnits]);
   const activeCatalogItemIds = useMemo(
     () => new Set(catalogItems.map((item) => item.id)),
     [catalogItems],
@@ -2589,6 +2914,20 @@ function ConfigurationDetail({
   configuration: Configuration;
   onCitation: (value: Evidence | Record<string, unknown>) => void;
 }) {
+  const coveragePercent = configuration.requirement_coverage_bps / 100;
+  const evaluated = configuration.evaluations.filter(
+    (evaluation) => evaluation.result !== "not_applicable",
+  );
+  const satisfied = evaluated.filter((evaluation) =>
+    ["satisfied", "exceeded"].includes(evaluation.result),
+  ).length;
+  const unresolved = evaluated.filter(
+    (evaluation) => evaluation.result === "unknown",
+  ).length;
+  const failed = evaluated.filter(
+    (evaluation) => evaluation.result === "failed",
+  ).length;
+  const issueGroups = summarizeConfigurationIssues(configuration.issues);
   return (
     <section className="card section-card" id="bom">
       <SectionHeading
@@ -2597,10 +2936,33 @@ function ConfigurationDetail({
       />
       <Alert>
         <Badge value={configuration.status} />{" "}
-        {configuration.issues
-          ?.map((issue) => safeReason(issue.detail))
-          .join(" ") ||
-          "Provisional results still require engineering certification."}
+        <strong>
+          {configurationBuildMessage(configuration, unresolved, failed)}
+        </strong>
+        <p>
+          {satisfied} of {evaluated.length} evaluated requirements are verified
+          against this configuration. {unresolved} remain unverified
+          {failed ? ` and ${failed} fail a tested constraint` : ""}.
+        </p>
+        {issueGroups.length ? (
+          <details className="technical-details issue-summary">
+            <summary>
+              Show {issueGroups.length} grouped solver blocker
+              {issueGroups.length === 1 ? "" : "s"}
+            </summary>
+            <ul className="audit-list">
+              {issueGroups.map((issue) => (
+                <li key={issue.label}>
+                  <strong>{issue.label}</strong>
+                  <span>
+                    {issue.count} occurrence{issue.count === 1 ? "" : "s"}
+                  </span>
+                  <small>{issue.detail}</small>
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
       </Alert>
       <h3>Bill of materials</h3>
       <div className="table-wrap">
@@ -2648,9 +3010,12 @@ function ConfigurationDetail({
           </div>
         ))}
       </dl>
-      <h3>
-        Requirement coverage ({configuration.requirement_coverage_bps / 100}%)
-      </h3>
+      <h3>Requirement coverage ({coveragePercent}%)</h3>
+      <p className="coverage-explainer">
+        {coveragePercent === 0
+          ? "No evaluated tender requirement is currently verified against a deterministic catalog capability. This usually means the tender clause needs evidence or an approved capability mapping; adding a part alone will not make it pass."
+          : `${satisfied} verified requirement${satisfied === 1 ? "" : "s"} are covered by catalog-backed facts. Remaining unknown or failed clauses still require review.`}
+      </p>
       <div className="table-wrap">
         <table>
           <thead>
@@ -2702,6 +3067,42 @@ function ConfigurationDetail({
       </TechnicalDetails>
     </section>
   );
+}
+function summarizeConfigurationIssues(issues: Configuration["issues"]) {
+  const groups = new Map<
+    string,
+    { label: string; detail: string; count: number }
+  >();
+  for (const issue of issues) {
+    const label = humanLabel(issue.code ?? "review blocker");
+    const current = groups.get(label);
+    if (current) current.count += 1;
+    else
+      groups.set(label, {
+        label,
+        detail: safeReason(issue.detail),
+        count: 1,
+      });
+  }
+  return [...groups.values()].sort(
+    (left, right) =>
+      right.count - left.count || left.label.localeCompare(right.label),
+  );
+}
+function configurationBuildMessage(
+  configuration: Configuration,
+  unresolved: number,
+  failed: number,
+) {
+  if (configuration.status === "infeasible")
+    return "This configuration does not meet at least one tested mandatory constraint.";
+  if (configuration.status === "needs_review")
+    return unresolved
+      ? "This is a provisional estimate, not a tender-compliant build."
+      : "This configuration still needs human review before any decision.";
+  if (failed)
+    return "This configuration has tested constraint failures and cannot be recommended.";
+  return "This configuration passed the deterministic checks represented in the catalog snapshot.";
 }
 function platformName(configuration: Configuration) {
   const platform = configuration.selections.find((selection) =>
@@ -3041,7 +3442,7 @@ function message(error: unknown) {
       return error.detail;
     if (error.detail.includes("unit is not compatible")) return error.detail;
     return error.status === 422
-      ? "Check the entered value and try again."
+      ? error.detail || "Check the entered value and try again."
       : error.status === 503
         ? "The local worker is unavailable. Retry shortly."
         : "The requested item is not available in this workflow state.";
@@ -3136,10 +3537,14 @@ function downloadBrief(
     )
     .join("\n");
   const link = document.createElement("a");
-  link.href = URL.createObjectURL(
+  const objectUrl = URL.createObjectURL(
     new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }),
   );
+  link.href = objectUrl;
   link.download = "tender-decision-brief.csv";
+  link.style.display = "none";
+  document.body.append(link);
   link.click();
-  URL.revokeObjectURL(link.href);
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }

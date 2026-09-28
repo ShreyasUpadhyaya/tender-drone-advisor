@@ -916,6 +916,98 @@ footer {
   align-self: end;
   min-height: 42px;
 }
+
+.empty-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.source-section-explorer {
+  width: 100%;
+  text-align: left;
+}
+
+.source-section-explorer summary {
+  color: var(--blue-dark);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.source-section-list {
+  display: grid;
+  gap: 8px;
+  max-height: 224px;
+  margin: 12px 0 0;
+  overflow: auto;
+  padding: 0;
+}
+
+.source-section-list li {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  list-style: none;
+  padding: 8px 10px;
+}
+
+.estimate-action {
+  margin-top: 12px;
+}
+
+.save-confirmation {
+  color: var(--good);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.buildability-readiness {
+  border-color: #f0c36d;
+}
+
+.buildability-readiness h2 {
+  font-size: 1.125rem;
+  margin: 4px 0 8px;
+}
+
+.buildability-readiness p {
+  margin: 0 0 12px;
+  max-width: 76ch;
+}
+
+.buildability-readiness small {
+  color: var(--muted);
+  display: block;
+  margin-top: 12px;
+}
+
+.buildability-positive {
+  border-color: #7cc79f;
+}
+
+.buildability-negative {
+  border-color: #f1a6a0;
+}
+
+.readiness-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.coverage-explainer {
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 88ch;
+}
+
+.issue-summary {
+  margin-top: 12px;
+}
 .scenario-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));

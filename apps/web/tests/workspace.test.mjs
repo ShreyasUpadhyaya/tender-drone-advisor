@@ -93,6 +93,7 @@ test("cost, citation, keyboard and responsive contracts are deterministic", () =
 
 const page = readFileSync(resolve("app/page.tsx"), "utf8");
 const styles = readFileSync(resolve("app/styles.css"), "utf8");
+const api = readFileSync(resolve("lib/api.ts"), "utf8");
 
 test("decision view hides internal identifiers until technical details are opened", () => {
   assert.match(page, /Technical audit ID: \{extraction\.trace_id\}/);
@@ -169,6 +170,11 @@ test("responsive, overflow, export and accessible control contracts are present"
   assert.match(page, /Export decision brief CSV/);
   assert.match(page, /new Blob\(\["\\uFEFF", csv\]/);
   assert.match(page, /text\/csv;charset=utf-8/);
+  assert.match(page, /document\.body\.append\(link\)/);
+  assert.match(
+    page,
+    /window\.setTimeout\(\(\) => URL\.revokeObjectURL\(objectUrl\), 0\)/,
+  );
   assert.match(page, /formatInr\(configuration\.cost\.material_paise\)/);
 });
 
@@ -220,6 +226,65 @@ test("review decisions expose current state and append-only revision controls", 
   assert.match(page, /Change recorded decision/);
   assert.match(page, /supersedes_event_id: current\?\.id/);
   assert.match(page, /event\.is_current \? "current" : "superseded"/);
+});
+
+test("missing tender categories remain immutable but lead to an explicit estimate workflow", () => {
+  assert.match(
+    page,
+    /Set an internal[\s\S]*humanLabel\(group\.assumptionCategory\)/,
+  );
+  assert.match(page, /onExploreAssumption\(group\.assumptionCategory!/);
+  assert.match(page, /SourceSectionExplorer/);
+  assert.match(page, /Inspect tender source sections/);
+  assert.match(page, /issueCategory\(issue\.detail\)/);
+  assert.match(page, /\$\{issue\.code \?\? "review"\}-\$\{assumptionCategory/);
+});
+
+test("inventory revisions explain an expected-date validation failure before requesting the API", () => {
+  assert.match(page, /Select the expected arrival date before saving stock/);
+  assert.match(
+    page,
+    /disabled=\{!rationale\.trim\(\) \|\| !validExpectedDate \|\| saving\}/,
+  );
+  assert.match(page, /Saving inventory version/);
+  assert.match(api, /function errorDetail\(body: unknown\)/);
+  assert.match(api, /humanField\(field\)/);
+});
+
+test("viewing a scenario analysis reloads its immutable result and moves to the result section", () => {
+  const handler = page.slice(
+    page.indexOf("async function openScenarioAnalysis"),
+    page.indexOf("async function startReport"),
+  );
+  assert.match(handler, /api\.analysis\(analysis\.id\)/);
+  assert.match(handler, /api\.configurations\(current\.id\)/);
+  assert.match(handler, /getElementById\("analysis"\)\?\.scrollIntoView/);
+});
+
+test("buildability distinguishes missing tender evidence from a selected-catalog gap", () => {
+  assert.match(page, /function BuildabilityReadiness/);
+  assert.match(page, /We cannot recommend a build yet/);
+  assert.match(
+    page,
+    /Updating the catalog will not fix missing or unsupported tender[\s\S]*evidence/,
+  );
+  assert.match(page, /We cannot build this from the selected catalog yet/);
+  assert.match(page, /Catalog Administration/);
+  assert.match(page, /blocking\.length > 3/);
+});
+
+test("BOM details group repeated solver issues and explain zero requirement coverage", () => {
+  assert.match(page, /summarizeConfigurationIssues\(configuration\.issues\)/);
+  assert.match(page, /grouped solver blocker/);
+  assert.match(page, /No evaluated tender requirement is currently verified/);
+  assert.match(page, /function configurationBuildMessage/);
+  assert.doesNotMatch(
+    page.slice(
+      page.indexOf("function ConfigurationDetail"),
+      page.indexOf("function summarizeConfigurationIssues"),
+    ),
+    /configuration\.issues\s*\?\.map/,
+  );
 });
 
 test("grounded report renders a human decision brief without raw retrieval payloads", () => {
